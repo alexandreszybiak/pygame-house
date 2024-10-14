@@ -29,16 +29,15 @@ class Platform:
 
 class Player:
     def __init__(self):
-        self._x = viewport.get_width()/2-5
-        self._y = 32
         self._width = 10
         self._height = 12
         self._velocity_y = 0
         self._y_remainder = 0
+        self.rect = pygame.Rect(viewport.get_width()/2-5, 32, 10, 12)
     def update(self):
-        #self._velocity_y += 0.09
+        self._velocity_y += 0.04
         #self._velocity_y
-        self._y += self._velocity_y
+        #self._y += self._velocity_y
         self.move_y(self._velocity_y)
     def move_y(self, amount):
         self._y_remainder += amount
@@ -47,10 +46,17 @@ class Player:
             return
         self._y_remainder -= _move
         _sign = copysign(1, _move)
-        while _move > 0:
-            self._y += _sign
+        while _move != 0:
+            p = self.rect.move(0,_sign).collidelist(platforms)
+            if p == -1:
+                self.rect.move_ip(0, _sign)
+                _move -= _sign
+            else:
+                self._velocity_y = -3
+                platforms.pop(p)
+                break
     def draw(self):
-        pygame.draw.rect(viewport, 'yellow',(self._x, self._y, self._width, self._height))
+        pygame.draw.rect(viewport, 'yellow',self.rect)
 
 # pygame setup
 pygame.init()
