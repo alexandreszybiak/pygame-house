@@ -10,12 +10,20 @@ resolution = (160,240)
 pixel_size = 3
 
 # game param
-laser_position = 220
+gravity = 0.065
+platform_timer = 1250
+laser_position = 40
 laser_height = 4
 smallest_platform = 16
 largest_platform = 48
 platform_height = 4
+player_spawn_position = 48
 
+class Laser:
+    def __init__(self, y):
+        self.rect = pygame.Rect(0, y, viewport.get_width(), laser_height)
+    def draw(self):
+        pygame.draw.rect(viewport, 'red', self.rect)
 class Platform:
     def __init__(self):
         _width = random.randint(smallest_platform, largest_platform)
@@ -33,10 +41,18 @@ class Player:
         self._height = 12
         self._velocity_y = 0
         self._y_remainder = 0
-        self.rect = pygame.Rect(viewport.get_width()/2-5, 32, 10, 12)
+        self.rect = pygame.Rect(viewport.get_width()/2-5, player_spawn_position, 10, 12)
+        self.bounce_amount = 2.9
+    def respawn(self):
+        self.rect.y = player_spawn_position
     def update(self):
+        # Check for death
+        if self.rect.collidelist(lasers) != -1:
+            self.respawn()
         move_dir = -keys[pygame.K_LEFT] + keys[pygame.K_RIGHT]
-        self._velocity_y += 0.06
+        self._velocity_y += gravity
+        if self._velocity_y > 4:
+            self._velocity_y = 4
         #self._velocity_y
         #self._y += self._velocity_y
         self.rect.move_ip(move_dir * 2, 0)
@@ -58,7 +74,7 @@ class Player:
                 self.rect.move_ip(0, _sign)
                 _move -= _sign
             else:
-                self._velocity_y = -2.6
+                self._velocity_y = -self.bounce_amount
                 platforms.pop(p)
                 break
     def draw(self):
@@ -69,13 +85,14 @@ pygame.init()
 screen = pygame.display.set_mode((resolution[0] * pixel_size, resolution[1] * pixel_size))
 viewport = pygame.Surface(resolution)
 clock = pygame.time.Clock()
-pygame.time.set_timer(999, 1000, 0)
+pygame.time.set_timer(999, platform_timer, 0)
 running = True
 keys = pygame.key.get_pressed()
 
 #game variables
 wall = pygame.image.load('wall.png').convert()
 platforms = []
+lasers = [ Laser(laser_position), Laser(viewport.get_height() - laser_position - laser_height) ]
 player = Player()
 
 while running:
@@ -104,7 +121,9 @@ while running:
     player.draw()
     for p in platforms:
         p.draw()
+    # Laser
     pygame.draw.rect(viewport, 'red', (0, laser_position, viewport.get_width(), laser_height))
+    pygame.draw.rect(viewport, 'red', (0, viewport.get_height() - laser_position, viewport.get_width(), laser_height))
 
     # flip() the display to put your work on screen
     screen.blit(pygame.transform.scale_by(viewport, 3), screen.get_rect())
