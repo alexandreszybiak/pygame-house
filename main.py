@@ -2,6 +2,7 @@
 import random
 import math
 from math import copysign
+from operator import truediv
 
 import pygame
 
@@ -18,6 +19,7 @@ smallest_platform = 16
 largest_platform = 48
 platform_height = 4
 player_spawn_position = 48
+platform_timer_id = 999
 
 class Laser:
     def __init__(self, y):
@@ -37,6 +39,8 @@ class Platform:
 
 class Player:
     def __init__(self):
+        self.alive = True
+        self.is_falling = False
         self._width = 10
         self._height = 12
         self._velocity_y = 0
@@ -44,12 +48,24 @@ class Player:
         self.rect = pygame.Rect(viewport.get_width()/2-5, player_spawn_position, 10, 12)
         self.bounce_amount = 2.9
     def respawn(self):
+        self.alive = True
         self.rect.y = player_spawn_position
+        self.rect.centerx = viewport.get_rect().centerx
+        self._velocity_y = 0
+    def die(self):
+        self.alive = False
+        self.is_falling = False
+        pygame.time.set_timer(platform_timer_id, 0, 0)
+        platforms.clear()
     def update(self):
+        if not self.alive:
+            return
+        move_dir = -keys[pygame.K_LEFT] + keys[pygame.K_RIGHT]
+        if not self.is_falling:
+            return
         # Check for death
         if self.rect.collidelist(lasers) != -1:
-            self.respawn()
-        move_dir = -keys[pygame.K_LEFT] + keys[pygame.K_RIGHT]
+            self.die()
         self._velocity_y += gravity
         if self._velocity_y > 4:
             self._velocity_y = 4
@@ -78,18 +94,25 @@ class Player:
                 platforms.pop(p)
                 break
     def draw(self):
-        pygame.draw.rect(viewport, 'yellow',self.rect)
+        if self.alive:
+            pygame.draw.rect(viewport, 'yellow',self.rect)
 
 # pygame setup
 pygame.init()
 screen = pygame.display.set_mode((resolution[0] * pixel_size, resolution[1] * pixel_size))
 viewport = pygame.Surface(resolution)
 clock = pygame.time.Clock()
-pygame.time.set_timer(999, platform_timer, 0)
+pygame.time.set_timer(platform_timer_id, platform_timer, 0)
 running = True
 keys = pygame.key.get_pressed()
+font = pygame.font.Font('freesansbold.ttf', 32)
+game_over_text = font.render('Game Over', False, 'green', 'blue')
+game_over_text_rect = game_over_text.get_rect()
 
-#game variables
+#game variable
+game_state = 0
+
+#ingame variables
 wall = pygame.image.load('wall.png').convert()
 platforms = []
 lasers = [ Laser(laser_position), Laser(viewport.get_height() - laser_position - laser_height) ]
@@ -99,6 +122,12 @@ while running:
     # poll for events
     # pygame.QUIT event means the user clicked X to close your window
     for event in pygame.event.get():
+        if event.type == pygame.KEYDOWN:
+            if not player.alive:
+                player.respawn()
+                pygame.time.set_timer(platform_timer_id, platform_timer, 0)
+            elif not player.is_falling:
+                player.is_falling = True
         if event.type == pygame.QUIT:
             running = False
         if event.type == 999:
@@ -125,6 +154,8 @@ while running:
     pygame.draw.rect(viewport, 'red', (0, laser_position, viewport.get_width(), laser_height))
     pygame.draw.rect(viewport, 'red', (0, viewport.get_height() - laser_position, viewport.get_width(), laser_height))
 
+    if not player.alive:
+        viewport.blit(game_over_text, game_over_text_rect)
     # flip() the display to put your work on screen
     screen.blit(pygame.transform.scale_by(viewport, 3), screen.get_rect())
 
