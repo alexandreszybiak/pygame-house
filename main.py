@@ -1,8 +1,9 @@
 # Example file showing a basic pygame "game loop"
 import random
 import math
-from math import copysign
+from math import copysign, floor
 from operator import truediv
+from tokenize import Intnumber
 
 import pygame
 
@@ -20,6 +21,7 @@ largest_platform = 48
 platform_height = 4
 player_spawn_position = 48
 platform_timer_id = 999
+score_position = (3,3)
 
 class Laser:
     def __init__(self, y):
@@ -47,8 +49,10 @@ class Player:
         self._y_remainder = 0
         self.rect = pygame.Rect(viewport.get_width()/2-5, player_spawn_position, 10, 12)
         self.bounce_amount = 2.9
+        self.score = 0
     def respawn(self):
         self.alive = True
+        self.score = 0
         self.rect.y = player_spawn_position
         self.rect.centerx = viewport.get_rect().centerx
         self._velocity_y = 0
@@ -92,6 +96,7 @@ class Player:
             else:
                 self._velocity_y = -self.bounce_amount
                 platforms.pop(p)
+                self.score += 1
                 break
     def draw(self):
         if self.alive:
@@ -113,7 +118,8 @@ game_over_text_rect = game_over_text.get_rect()
 game_state = 0
 
 #ingame variables
-wall = pygame.image.load('wall.png').convert()
+numbers_sprite = pygame.image.load('numbers.bmp')
+numbers_sprite.set_colorkey((255,0,255))
 platforms = []
 lasers = [ Laser(laser_position), Laser(viewport.get_height() - laser_position - laser_height) ]
 player = Player()
@@ -156,6 +162,13 @@ while running:
 
     if not player.alive:
         viewport.blit(game_over_text, game_over_text_rect)
+
+    # Display score
+    n = floor(player.score / 10)
+    if n > 0:
+        viewport.blit(numbers_sprite, (viewport.get_width() - 10,3,5,5),(n * 5,0,5,5))
+    n = player.score % 10
+    viewport.blit(numbers_sprite, (viewport.get_width() - 6,3,5,5),(n * 5,0,5,5))
     # flip() the display to put your work on screen
     screen.blit(pygame.transform.scale_by(viewport, 3), screen.get_rect())
 
