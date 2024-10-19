@@ -3,6 +3,7 @@ import random
 import math
 from math import copysign, floor
 from operator import truediv
+from random import randint
 from tokenize import Intnumber
 
 import pygame
@@ -13,7 +14,7 @@ pixel_size = 3
 
 # game param
 gravity = 0.065
-platform_timer = 1250
+platform_timer = 1000
 laser_position = 40
 laser_height = 4
 smallest_platform = 16
@@ -34,8 +35,10 @@ class Platform:
         _x = random.randint(0, viewport.get_width() - _width)
         _y = viewport.get_height()
         self.rect = pygame.Rect(_x, _y, _width, platform_height)
+        self.rect.move_ip(0, randint(0, 32))
     def update(self):
-        self.rect.update((self.rect.x, self.rect.y - 1), (self.rect.w, self.rect.h))
+        self.rect.move_ip(0, -1)
+        #self.rect.update((self.rect.x, self.rect.y - 1), (self.rect.w, self.rect.h))
     def draw(self):
         pygame.draw.rect(viewport, 'blue', self.rect)
 
@@ -43,14 +46,27 @@ class Player:
     def __init__(self):
         self.alive = True
         self.is_falling = False
-        self._width = 10
-        self._height = 12
+        self._width = 8
+        self._height = 24
         self._velocity_y = 0
         self._y_remainder = 0
-        self.rect = pygame.Rect(viewport.get_width()/2-5, player_spawn_position, 10, 12)
-        self.bounce_amount = 2.9
+        self.rect = pygame.Rect(viewport.get_width()/2-5, player_spawn_position, self._width, self._height)
+        self.bounce_amount = 3.2
+        self.bounce_amount_modifier = 0.25
         self.score = 0
+        self.flip = False
+    def set_flip(self, value):
+        self.flip = value
+        x = self.rect.centerx
+        y = self.rect.bottom
+        size = (self._height, self._width)
+        if not self.flip:
+            size = (self._width, self._height)
+        self.rect.update((0, 0), size)
+        self.rect.centerx = x
+        self.rect.bottom = y
     def respawn(self):
+        self.set_flip(False)
         self.alive = True
         self.score = 0
         self.rect.y = player_spawn_position
@@ -94,7 +110,8 @@ class Player:
                 self.rect.move_ip(0, _sign)
                 _move -= _sign
             else:
-                self._velocity_y = -self.bounce_amount
+                self._velocity_y = -self.bounce_amount * (1 - self.flip * self.bounce_amount_modifier)
+                self.set_flip(not self.flip)
                 platforms.pop(p)
                 self.score += 1
                 break
