@@ -3,6 +3,7 @@ import math
 from math import copysign
 
 import pygame
+from Tools.demo.sortvisu import Array
 from pygame import Rect
 from pygame.math import Vector2
 from pygame.surface import Surface
@@ -15,9 +16,19 @@ os.environ['SDL_VIDEO_CENTERED'] = '1'
 #                               Game State                                    #
 ###############################################################################
 
+class GameState:
+    def __init__(self):
+        self.area = Rect(0,0,160,240)
+        self.paddle = Paddle(self, Vector2(0,200))
+        self.balls = [ Ball(self, Vector2(0,0), Vector2(1,1)) ]
+        self.brickGrid = Grid(10,8,16,8)
+
+    def is_leaving_the_area(self, rect):
+        return False
+
 class Entity:
-    def __init__(self,state,position):
-        self.state = state
+    def __init__(self,state: GameState,position):
+        self.state: GameState = state
         self.position = position
         self.rect = None
         self.movement_remainder = Vector2()
@@ -29,20 +40,37 @@ class Ball(Entity):
         self.rect = Rect(position.x, position.y, 4, 4)
         self.rect.center = self.state.area.center
 
+    def collide_x(self, x_direction):
+        if self.rect.move(x_direction, 0).right > self.state.area.right or self.rect.move(x_direction, 0).left < self.state.area.left:
+            return True
+        elif self.rect.move(x_direction, 0).colliderect(self.state.paddle):
+            return True
+        return False
+
+    def collide_y(self, y_direction):
+        if self.rect.move(0, y_direction).bottom > self.state.area.bottom or self.rect.move(0, y_direction).top < self.state.area.top:
+            return True
+        elif self.rect.move(0, y_direction).colliderect(self.state.paddle):
+            return True
+        return False
+
 class Paddle(Entity):
-    def __init__(self,state,position):
+    def __init__(self,state,position: Vector2):
         super().__init__(state, position)
         self.move_speed = 2
         self.rect = Rect(position.x,position.y,40,4)
 
-class GameState:
-    def __init__(self):
-        self.area = Rect(0,0,160,240)
-        self.paddle = Paddle(self, Vector2(0,200))
-        self.balls = [ Ball(self, Vector2(0,0), Vector2(0.5,0)) ]
+class Grid:
+    def __init__(self, width, height, cell_width, cell_height):
+        self.width: int = width
+        self.cells = [1 for i in range(width * height)]
+        self.cell_width: int = cell_width
+        self.cell_height: int = cell_height
 
-    def is_leaving_the_area(self, rect):
-        return False
+    @property
+    def height(self):
+        return len(self.cells) // self.width
+
 
 ###############################################################################
 #                                Commands                                     #
@@ -69,6 +97,7 @@ class MoveBallsCommand(Command):
     def run(self):
         for b in self.state.balls:
             self.move_x(b)
+            self.move_y(b)
 
     def move_x(self, b: Ball):
         b.movement_remainder.x += b.velocity.x
@@ -79,23 +108,55 @@ class MoveBallsCommand(Command):
         sign: int = int(copysign(1, move))
         while move != 0:
             move -= sign
-            if b.rect.move(sign, 0).right >= self.state.area.right or b.rect.move(sign, 0).left <= self.state.area.left:
+            if b.collide_x(sign):
                 b.velocity.x *= -1
                 break
             b.rect.move_ip(sign, 0)
+
+    def move_y(self, b: Ball):
+        b.movement_remainder.y += b.velocity.y
+        move: int = round(b.movement_remainder.y)
+        if move == 0:
+            return
+        b.movement_remainder.y -= move
+        sign: int = int(copysign(1, move))
+        while move != 0:
+            move -= sign
+            if b.collide_y(sign):
+                b.velocity.y *= -1
+                break
+            b.rect.move_ip(0, sign)
 
 
 ###############################################################################
 #                                Rendering                                    #
 ###############################################################################
+class RenderingLayer:
+    def render(self, surface):
+        raise NotImplementedError()
 
-class Layer:
+class EntityLayer(RenderingLayer):
     def __init__(self):
         self.entities = []
 
     def render(self, surface):
+        # Render entities
         for e in self.entities:
             pygame.draw.rect(surface, 'white', e.rect)
+
+class TileLayer(RenderingLayer):
+    def __init__(self, grid):
+        self.grid: Grid = grid
+
+    def render(self, surface):
+        for count, cells in enumerate(self.grid.cells):
+            x = count % self.grid.width * self.grid.cell_width
+            y = count // self.grid.width * self.grid.cell_height
+            w = self.grid.cell_width - 1
+            h = self.grid.cell_height - 1
+            pygame.draw.rect(surface, 'white', Rect(x,y,w,h))
+
+
 
 ###############################################################################
 #                             User Interface                                  #
@@ -110,10 +171,13 @@ class UserInterface:
 
         # Rendering properties
         self.pixel_size = 3
-        self.rendering_layer = Layer()
-        self.rendering_layer.entities.append(self.gameState.paddle)
+
+        entity_layer = EntityLayer()
+        entity_layer.entities.append(self.gameState.paddle)
         for b in self.gameState.balls:
-            self.rendering_layer.entities.append(b)
+            entity_layer.entities.append(b)
+        tile_layer = TileLayer(self.gameState.brickGrid)
+        self.rendering_layers = [entity_layer, tile_layer]
         self.viewport = Surface(self.gameState.area.size)
 
         # Window
@@ -159,7 +223,8 @@ class UserInterface:
     def render(self):
         self.viewport.fill((0, 0, 0))
 
-        self.rendering_layer.render(self.viewport)
+        for l  in self.rendering_layers:
+            l.render(self.viewport)
 
         self.window.blit(pygame.transform.scale_by(self.viewport, self.pixel_size), self.window.get_rect())
 
