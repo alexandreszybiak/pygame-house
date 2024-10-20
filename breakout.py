@@ -1,5 +1,7 @@
 import os
 import math
+from math import copysign
+
 import pygame
 from pygame import Rect
 from pygame.math import Vector2
@@ -18,23 +20,29 @@ class Entity:
         self.state = state
         self.position = position
         self.rect = None
-    def render(self, surface):
-        pygame.draw.rect(surface, 'white', self.rect)
+        self.movement_remainder = Vector2()
 
 class Ball(Entity):
     def __init__(self,state,position,velocity):
         super().__init__(state,position)
         self.velocity = velocity
+        self.rect = Rect(position.x, position.y, 4, 4)
+        self.rect.center = self.state.area.center
 
 class Paddle(Entity):
     def __init__(self,state,position):
         super().__init__(state, position)
         self.move_speed = 2
-        self.rect = Rect(position.x,position.y,80,4)
+        self.rect = Rect(position.x,position.y,40,4)
 
 class GameState:
     def __init__(self):
+        self.area = Rect(0,0,160,240)
         self.paddle = Paddle(self, Vector2(0,200))
+        self.balls = [ Ball(self, Vector2(0,0), Vector2(0.5,0)) ]
+
+    def is_leaving_the_area(self, rect):
+        return False
 
 ###############################################################################
 #                                Commands                                     #
@@ -54,11 +62,40 @@ class PaddleMoveCommand(Command):
     def run(self):
         self.paddle.rect.move_ip(self.paddle.move_speed * self.move_direction, 0)
 
+class MoveBallsCommand(Command):
+    def __init__(self, state):
+        self.state: GameState = state
+
+    def run(self):
+        for b in self.state.balls:
+            self.move_x(b)
+
+    def move_x(self, b: Ball):
+        b.movement_remainder.x += b.velocity.x
+        move: int = round(b.movement_remainder.x)
+        if move == 0:
+            return
+        b.movement_remainder.x -= move
+        sign: int = int(copysign(1, move))
+        while move != 0:
+            move -= sign
+            if b.rect.move(sign, 0).right >= self.state.area.right or b.rect.move(sign, 0).left <= self.state.area.left:
+                b.velocity.x *= -1
+                break
+            b.rect.move_ip(sign, 0)
+
+
 ###############################################################################
 #                                Rendering                                    #
 ###############################################################################
 
+class Layer:
+    def __init__(self):
+        self.entities = []
 
+    def render(self, surface):
+        for e in self.entities:
+            pygame.draw.rect(surface, 'white', e.rect)
 
 ###############################################################################
 #                             User Interface                                  #
@@ -72,14 +109,15 @@ class UserInterface:
         self.gameState = GameState()
 
         # Rendering properties
-        resolution = Vector2(160, 240)
         self.pixel_size = 3
-        self.entities = [ self.gameState.paddle]
-        self.viewport = Surface(resolution)
+        self.rendering_layer = Layer()
+        self.rendering_layer.entities.append(self.gameState.paddle)
+        for b in self.gameState.balls:
+            self.rendering_layer.entities.append(b)
+        self.viewport = Surface(self.gameState.area.size)
 
         # Window
-        window_size = resolution.elementwise() * 3
-        self.window = pygame.display.set_mode((int(window_size.x), int(window_size.y)))
+        self.window = pygame.display.set_mode(self.viewport.get_rect().scale_by(3,3).size)
         pygame.display.set_caption("Alexandre Szybiak - Breakout")
 
         # Controls
@@ -109,6 +147,7 @@ class UserInterface:
             self.commands.append(command)
 
         # Move balls
+        self.commands.append(MoveBallsCommand(self.gameState))
 
         # Apply gravity
 
@@ -120,8 +159,7 @@ class UserInterface:
     def render(self):
         self.viewport.fill((0, 0, 0))
 
-        for entity in self.entities:
-            entity.render(self.viewport)
+        self.rendering_layer.render(self.viewport)
 
         self.window.blit(pygame.transform.scale_by(self.viewport, self.pixel_size), self.window.get_rect())
 
