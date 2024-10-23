@@ -36,23 +36,6 @@ class Ball(Entity):
         self.rect = Rect(position.x, position.y, 4, 4)
         self.rect.center = self.state.area.center
 
-    def collide_x(self, x_direction):
-        if self.rect.move(x_direction, 0).right > self.state.area.right or self.rect.move(x_direction, 0).left < self.state.area.left:
-            return True
-        elif self.rect.move(x_direction, 0).colliderect(self.state.paddle):
-            return True
-        return False
-
-    def collide_y(self, y_direction):
-        if y_direction < 0:
-            if 1 in self.state.brickGrid.get_values(self.rect.topleft, self.rect.topright):
-                return True
-        if self.rect.move(0, y_direction).bottom > self.state.area.bottom or self.rect.move(0, y_direction).top < self.state.area.top:
-            return True
-        elif self.rect.move(0, y_direction).colliderect(self.state.paddle):
-            return True
-        return False
-
 class Paddle(Entity):
     def __init__(self,state,position: Vector2):
         super().__init__(state, position)
@@ -66,10 +49,6 @@ class Grid:
         self.cell_width: int = cell_width
         self.cell_height: int = cell_height
 
-        print(self.get_cell_value(1, 1))
-        print(self.get_values((18,4),(18, 36)))
-        print(self.get_cell_coordinates(10, 24))
-
     @property
     def height(self):
         return len(self.cells) // self.width
@@ -79,7 +58,7 @@ class Grid:
         y = world_y // self.cell_height
         return x,y
 
-    def get_cell_value(self, x, y):
+    def get_cell(self, x, y):
         if 0 > x >= self.width:
             return 0
         if y >= self.height:
@@ -89,14 +68,31 @@ class Grid:
         return value
 
     def get_values(self, point_a: tuple[int, int], point_b: tuple[int, int]):
-        cells = []
+        cells_value = []
         top_left = self.get_cell_coordinates(point_a[0], point_a[1])
         bottom_right = self.get_cell_coordinates(point_b[0], point_b[1])
         for x in range(top_left[0], bottom_right[0] + 1):
             for y in range(top_left[1], bottom_right[1] + 1):
-                cells.append(self.get_cell_value(x, y))
+                cells_value.append(self.get_cell(x, y))
+        return cells_value
+
+    def get_region(self, x1, y1, x2, y2):
+        cells = []
+        for x in range(x1, x2 + 1):
+            for y in range(y1, y2 + 1):
+                cells.append(self.get_cell(x, y))
         return cells
 
+    def set_cell(self, value, x, y):
+        self.cells[x + y * self.width] = value
+
+    def set_region(self, value, x1, y1, x2, y2):
+        for x in range(x1, x2 + 1):
+            for y in range(y1, y2 + 1):
+                self.set_cell(value, x, y)
+
+    def on_ball_collide_grid(self, point_a, point_b):
+        pass
 
 ###############################################################################
 #                                Commands                                     #
@@ -105,7 +101,6 @@ class Grid:
 class Command:
     def run(self):
         raise NotImplementedError()
-
 
 class PaddleMoveCommand(Command):
     def __init__(self, state, paddle, move_direction):
@@ -125,7 +120,27 @@ class MoveBallsCommand(Command):
             self.move_x(b)
             self.move_y(b)
 
-    def move_x(self, b: Ball):
+    def collide_x(self, ball, x_direction):
+        if ball.rect.move(x_direction, 0).right > self.state.area.right or ball.rect.move(x_direction, 0).left < self.state.area.left:
+            return True
+        elif ball.rect.move(x_direction, 0).colliderect(self.state.paddle):
+            return True
+        return False
+
+    def collide_y(self, ball, y_direction):
+        if y_direction < 0:
+            cell_1 = self.state.brickGrid.get_cell_coordinates(ball.rect.left, ball.rect.top)
+            cell_2 = self.state.brickGrid.get_cell_coordinates(ball.rect.right, ball.rect.top)
+            if 1 in self.state.brickGrid.get_region(cell_1[0], cell_1[1], cell_2[0], cell_2[1]):
+                self.state.brickGrid.set_region(0, cell_1[0], cell_1[1], cell_2[0], cell_2[1])
+                return True
+        if ball.rect.move(0, y_direction).bottom > self.state.area.bottom or ball.rect.move(0, y_direction).top < self.state.area.top:
+            return True
+        elif ball.rect.move(0, y_direction).colliderect(ball.state.paddle):
+            return True
+        return False
+
+    def move_x(self, b):
         b.movement_remainder.x += b.velocity.x
         move: int = round(b.movement_remainder.x)
         if move == 0:
@@ -134,12 +149,12 @@ class MoveBallsCommand(Command):
         sign: int = int(copysign(1, move))
         while move != 0:
             move -= sign
-            if b.collide_x(sign):
+            if self.collide_x(b, sign):
                 b.velocity.x *= -1
                 break
             b.rect.move_ip(sign, 0)
 
-    def move_y(self, b: Ball):
+    def move_y(self, b):
         b.movement_remainder.y += b.velocity.y
         move: int = round(b.movement_remainder.y)
         if move == 0:
@@ -148,11 +163,10 @@ class MoveBallsCommand(Command):
         sign: int = int(copysign(1, move))
         while move != 0:
             move -= sign
-            if b.collide_y(sign):
+            if self.collide_y(b, sign):
                 b.velocity.y *= -1
                 break
             b.rect.move_ip(0, sign)
-
 
 ###############################################################################
 #                                Rendering                                    #
@@ -175,7 +189,9 @@ class TileLayer(RenderingLayer):
         self.grid: Grid = grid
 
     def render(self, surface):
-        for count, cells in enumerate(self.grid.cells):
+        for count, cell in enumerate(self.grid.cells):
+            if cell == 0:
+                continue
             x = count % self.grid.width * self.grid.cell_width
             y = count // self.grid.width * self.grid.cell_height
             w = self.grid.cell_width - 1
