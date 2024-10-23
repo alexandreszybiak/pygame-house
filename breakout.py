@@ -1,15 +1,10 @@
 import os
-import math
 from math import copysign
-from typing import overload
 
 import pygame
-from Tools.demo.sortvisu import Array
 from pygame import Rect
 from pygame.math import Vector2
 from pygame.surface import Surface
-
-from main import viewport
 
 os.environ['SDL_VIDEO_CENTERED'] = '1'
 
