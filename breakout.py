@@ -1,6 +1,7 @@
 import os
 import math
 from math import copysign
+from typing import overload
 
 import pygame
 from Tools.demo.sortvisu import Array
@@ -48,6 +49,9 @@ class Ball(Entity):
         return False
 
     def collide_y(self, y_direction):
+        if y_direction < 0:
+            if 1 in self.state.brickGrid.get_values(self.rect.topleft, self.rect.topright):
+                return True
         if self.rect.move(0, y_direction).bottom > self.state.area.bottom or self.rect.move(0, y_direction).top < self.state.area.top:
             return True
         elif self.rect.move(0, y_direction).colliderect(self.state.paddle):
@@ -67,9 +71,36 @@ class Grid:
         self.cell_width: int = cell_width
         self.cell_height: int = cell_height
 
+        print(self.get_cell_value(1, 1))
+        print(self.get_values((18,4),(18, 36)))
+        print(self.get_cell_coordinates(10, 24))
+
     @property
     def height(self):
         return len(self.cells) // self.width
+
+    def get_cell_coordinates(self, world_x, world_y):
+        x = world_x // self.cell_width
+        y = world_y // self.cell_height
+        return x,y
+
+    def get_cell_value(self, x, y):
+        if 0 > x >= self.width:
+            return 0
+        if y >= self.height:
+            return 0
+        index: int = x * y
+        value: int = self.cells[index]
+        return value
+
+    def get_values(self, point_a: tuple[int, int], point_b: tuple[int, int]):
+        cells = []
+        top_left = self.get_cell_coordinates(point_a[0], point_a[1])
+        bottom_right = self.get_cell_coordinates(point_b[0], point_b[1])
+        for x in range(top_left[0], bottom_right[0] + 1):
+            for y in range(top_left[1], bottom_right[1] + 1):
+                cells.append(self.get_cell_value(x, y))
+        return cells
 
 
 ###############################################################################
