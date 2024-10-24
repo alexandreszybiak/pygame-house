@@ -45,9 +45,10 @@ class Paddle(Entity):
 class Grid:
     def __init__(self, width, height, cell_width, cell_height):
         self.width: int = width
-        self.cells = [1 for i in range(width * height)]
+        self.cells = [0 for i in range(width * height)]
         self.cell_width: int = cell_width
         self.cell_height: int = cell_height
+        self.set_region(1,1,1, self.width - 2, self.height)
 
     @property
     def height(self):
@@ -59,11 +60,11 @@ class Grid:
         return x,y
 
     def get_cell(self, x, y):
-        if 0 > x >= self.width:
+        if x >= self.width or x < 0:
             return 0
-        if y >= self.height:
+        if y >= self.height or y < 0:
             return 0
-        index: int = x * y
+        index: int = x + y * self.width
         value: int = self.cells[index]
         return value
 
@@ -84,15 +85,14 @@ class Grid:
         return cells
 
     def set_cell(self, value, x, y):
-        self.cells[x + y * self.width] = value
+        index = x + y * self.width
+        if 0 <= index < len(self.cells):
+            self.cells[index] = value
 
     def set_region(self, value, x1, y1, x2, y2):
         for x in range(x1, x2 + 1):
             for y in range(y1, y2 + 1):
                 self.set_cell(value, x, y)
-
-    def on_ball_collide_grid(self, point_a, point_b):
-        pass
 
 ###############################################################################
 #                                Commands                                     #
@@ -117,26 +117,41 @@ class MoveBallsCommand(Command):
 
     def run(self):
         for b in self.state.balls:
-            self.move_x(b)
             self.move_y(b)
+            self.move_x(b)
 
-    def collide_x(self, ball, x_direction):
-        if ball.rect.move(x_direction, 0).right > self.state.area.right or ball.rect.move(x_direction, 0).left < self.state.area.left:
+
+    def collide_x(self, ball_rect, x_direction):
+        x = ball_rect.left if x_direction < 0 else ball_rect.right
+
+        cell_1 = self.state.brickGrid.get_cell_coordinates(x, ball_rect.top)
+        cell_2 = self.state.brickGrid.get_cell_coordinates(x, ball_rect.bottom)
+
+        if 1 in self.state.brickGrid.get_region(cell_1[0], cell_1[1], cell_2[0], cell_2[1]):
+            self.state.brickGrid.set_region(0, cell_1[0], cell_1[1], cell_2[0], cell_2[1])
             return True
-        elif ball.rect.move(x_direction, 0).colliderect(self.state.paddle):
+        elif ball_rect.right > self.state.area.right:
+            return True
+        elif ball_rect.left < self.state.area.left:
+            return True
+        elif ball_rect.colliderect(self.state.paddle):
             return True
         return False
 
-    def collide_y(self, ball, y_direction):
-        if y_direction < 0:
-            cell_1 = self.state.brickGrid.get_cell_coordinates(ball.rect.left, ball.rect.top)
-            cell_2 = self.state.brickGrid.get_cell_coordinates(ball.rect.right, ball.rect.top)
-            if 1 in self.state.brickGrid.get_region(cell_1[0], cell_1[1], cell_2[0], cell_2[1]):
-                self.state.brickGrid.set_region(0, cell_1[0], cell_1[1], cell_2[0], cell_2[1])
-                return True
-        if ball.rect.move(0, y_direction).bottom > self.state.area.bottom or ball.rect.move(0, y_direction).top < self.state.area.top:
+    def collide_y(self, ball_rect, y_direction):
+        y = ball_rect.top if y_direction < 0 else ball_rect.bottom
+
+        cell_1 = self.state.brickGrid.get_cell_coordinates(ball_rect.left, y)
+        cell_2 = self.state.brickGrid.get_cell_coordinates(ball_rect.right, y)
+
+        if 1 in self.state.brickGrid.get_region(cell_1[0], cell_1[1], cell_2[0], cell_2[1]):
+            self.state.brickGrid.set_region(0, cell_1[0], cell_1[1], cell_2[0], cell_2[1])
             return True
-        elif ball.rect.move(0, y_direction).colliderect(ball.state.paddle):
+        elif ball_rect.top < self.state.area.top:
+            return True
+        elif ball_rect.bottom > self.state.area.bottom:
+            return True
+        elif ball_rect.colliderect(self.state.paddle):
             return True
         return False
 
@@ -149,7 +164,7 @@ class MoveBallsCommand(Command):
         sign: int = int(copysign(1, move))
         while move != 0:
             move -= sign
-            if self.collide_x(b, sign):
+            if self.collide_x(b.rect.move(sign, 0), sign):
                 b.velocity.x *= -1
                 break
             b.rect.move_ip(sign, 0)
@@ -163,7 +178,7 @@ class MoveBallsCommand(Command):
         sign: int = int(copysign(1, move))
         while move != 0:
             move -= sign
-            if self.collide_y(b, sign):
+            if self.collide_y(b.rect.move(0,sign), sign):
                 b.velocity.y *= -1
                 break
             b.rect.move_ip(0, sign)
