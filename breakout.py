@@ -19,9 +19,6 @@ class GameState:
         self.balls = [ Ball(self, Vector2(0,0), Vector2(1,1)) ]
         self.brickGrid = Grid(10,8,16,8)
 
-    def is_leaving_the_area(self, rect):
-        return False
-
 class Entity:
     def __init__(self,state: GameState,position):
         self.state: GameState = state
@@ -214,6 +211,108 @@ class TileLayer(RenderingLayer):
             pygame.draw.rect(surface, 'white', Rect(x,y,w,h))
 
 
+###############################################################################
+#                                Game Modes                                   #
+###############################################################################
+
+class GameMode:
+    def process_input(self):
+        raise NotImplementedError()
+    def update(self):
+        raise NotImplementedError()
+    def render(self, window):
+        pass
+
+class PlayGameMode(GameMode):
+    def __init__(self, observer):
+        # Observer
+        self.observer = observer
+
+        # Game state
+        self.game_state = GameState()
+
+        # Layers
+        entity_layer = EntityLayer()
+        entity_layer.entities.append(self.game_state.paddle)
+        for b in self.game_state.balls:
+            entity_layer.entities.append(b)
+
+        tile_layer = TileLayer(self.game_state.brickGrid)
+
+        self.rendering_layers = [entity_layer, tile_layer]
+        self.viewport = Surface(self.game_state.area.size)
+
+        # Controls
+        self.paddle = self.game_state.paddle
+        self.commands = []
+
+    def process_input(self):
+        # Pygame events (close & keyboard)
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.observer.on_quit()
+                break
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    self.observer.on_quit()
+                    break
+                if event.key == pygame.K_p:
+                    self.observer.on_edit()
+                    break
+        keys = pygame.key.get_pressed()
+        move_direction = -keys[pygame.K_LEFT] + keys[pygame.K_RIGHT]
+
+        # Keyboard controls the moves of the player's unit
+        if move_direction != 0:
+            command = PaddleMoveCommand(self.game_state, self.paddle, move_direction)
+            self.commands.append(command)
+
+        # Move balls
+        self.commands.append(MoveBallsCommand(self.game_state))
+
+        # Apply gravity
+
+    def update(self):
+        for command in self.commands:
+            command.run()
+        self.commands.clear()
+
+    def render(self, window):
+        self.viewport.fill((0, 0, 0))
+
+        for l in self.rendering_layers:
+            l.render(self.viewport)
+
+class EditorMode(GameMode):
+    def __init__(self, observer, game_state):
+        # Observer
+        self.observer = observer
+
+        # Game state
+        self.game_state = game_state
+
+        # Controls
+        self.commands = []
+
+    def process_input(self):
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.observer.on_quit()
+                break
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    self.observer.on_quit()
+                    break
+                if event.key == pygame.K_p:
+                    self.observer.on_play()
+                    break
+
+    def update(self):
+        for command in self.commands:
+            command.run()
+        self.commands.clear()
+
+
 
 ###############################################################################
 #                             User Interface                                  #
@@ -223,75 +322,45 @@ class UserInterface:
     def __init__(self):
         pygame.init()
 
-        # Game state
-        self.gameState = GameState()
-
         # Rendering properties
         self.pixel_size = 3
 
-        entity_layer = EntityLayer()
-        entity_layer.entities.append(self.gameState.paddle)
-        for b in self.gameState.balls:
-            entity_layer.entities.append(b)
-        tile_layer = TileLayer(self.gameState.brickGrid)
-        self.rendering_layers = [entity_layer, tile_layer]
-        self.viewport = Surface(self.gameState.area.size)
+        # Modes
+        self.play_game_mode = PlayGameMode(self)
+        self.editor_game_mode = EditorMode(self, self.play_game_mode.game_state)
 
         # Window
-        self.window = pygame.display.set_mode(self.viewport.get_rect().scale_by(3,3).size)
+        self.window = pygame.display.set_mode(self.play_game_mode.viewport.get_rect().scale_by(3,3).size)
         pygame.display.set_caption("Alexandre Szybiak - Breakout")
-
-        # Controls
-        self.paddle = self.gameState.paddle
-        self.commands = []
 
         # Loop properties
         self.clock = pygame.time.Clock()
         self.running = True
+        self.paused = False
 
-    def process_input(self):
-        # Pygame events (close & keyboard)
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                self.running = False
-                break
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    self.running = False
-                    break
-        keys = pygame.key.get_pressed()
-        move_direction = -keys[pygame.K_LEFT] + keys[pygame.K_RIGHT]
+    def on_quit(self):
+        self.running = False
 
-        # Keyboard controls the moves of the player's unit
-        if move_direction != 0:
-            command = PaddleMoveCommand(self.gameState, self.paddle, move_direction)
-            self.commands.append(command)
+    def on_edit(self):
+        self.paused = True
 
-        # Move balls
-        self.commands.append(MoveBallsCommand(self.gameState))
-
-        # Apply gravity
-
-    def update(self):
-        for command in self.commands:
-            command.run()
-        self.commands.clear()
-
-    def render(self):
-        self.viewport.fill((0, 0, 0))
-
-        for l  in self.rendering_layers:
-            l.render(self.viewport)
-
-        self.window.blit(pygame.transform.scale_by(self.viewport, self.pixel_size), self.window.get_rect())
-
-        pygame.display.update()
+    def on_play(self):
+        self.paused = False
 
     def run(self):
         while self.running:
-            self.process_input()
-            self.update()
-            self.render()
+            if self.paused:
+                self.editor_game_mode.process_input()
+                self.editor_game_mode.update()
+            else:
+                self.play_game_mode.process_input()
+                self.play_game_mode.update()
+
+            self.play_game_mode.render(self.window)
+
+            # End of Frame
+            self.window.blit(pygame.transform.scale_by(self.play_game_mode.viewport, self.pixel_size), self.window.get_rect())
+            pygame.display.update()
             self.clock.tick(60)
 
 userInterface = UserInterface()
