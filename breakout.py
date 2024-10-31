@@ -91,6 +91,13 @@ class Grid:
             for y in range(y1, y2 + 1):
                 self.set_cell(value, x, y)
 
+    def set_cell_world(self, value, world_position:Vector2):
+        x = int(world_position.x // self.cell_width)
+        y = int(world_position.y // self.cell_height)
+        index = x + y * self.width
+        if 0 <= index < len(self.cells):
+            self.cells[index] = value
+
 ###############################################################################
 #                                Commands                                     #
 ###############################################################################
@@ -179,6 +186,14 @@ class MoveBallsCommand(Command):
                 b.velocity.y *= -1
                 break
             b.rect.move_ip(0, sign)
+
+class EditBricks(Command):
+    def __init__(self, state, position: Vector2):
+        self.state: GameState = state
+        self.position: Vector2 = position
+    def run(self):
+        self.state.brickGrid.set_cell_world(0, self.position)
+
 
 ###############################################################################
 #                                Rendering                                    #
@@ -306,12 +321,16 @@ class EditorMode(GameMode):
                 if event.key == pygame.K_p:
                     self.observer.on_play()
                     break
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                x = pygame.mouse.get_pos()[0] / 3
+                y = pygame.mouse.get_pos()[1] / 3
+                self.commands.append(EditBricks(self.game_state, Vector2(x, y)))
+
 
     def update(self):
         for command in self.commands:
             command.run()
         self.commands.clear()
-
 
 
 ###############################################################################
