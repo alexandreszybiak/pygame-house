@@ -1,6 +1,7 @@
 import os
 import json
 from math import copysign
+from turtledemo.penrose import start
 
 import pygame
 from pygame import Rect
@@ -96,6 +97,13 @@ class Grid:
         for x in range(x1, x2 + 1):
             for y in range(y1, y2 + 1):
                 self.set_cell(value, x, y)
+
+    def set_region_world(self, value, rect):
+        x1: int = int(rect.left / self.cell_width)
+        y1: int = int(rect.top / self.cell_height)
+        x2: int = int(rect.right / self.cell_width)
+        y2: int = int(rect.bottom / self.cell_height)
+        self.set_region(value, x1, y1, x2, y2)
 
 
 ###############################################################################
@@ -204,13 +212,13 @@ class MoveBallsCommand(Command):
 
 
 class EditBricks(Command):
-    def __init__(self, state, position: Vector2):
+    def __init__(self, state, value, rect):
         self.state: GameState = state
-        self.position: Vector2 = position
+        self.value = value
+        self.rect: Rect = rect
 
     def run(self):
-        c = self.state.brick_grid.get_cell_world(self.position)
-        self.state.brick_grid.set_cell_world(1 - c, self.position)
+        self.state.brick_grid.set_region_world(self.value, self.rect)
 
 
 class SaveLevel(Command):
@@ -334,13 +342,18 @@ class PlayGameMode(GameMode):
 class EditorMode(GameMode):
     def __init__(self, observer, game_state):
         # Observer
-        self.observer = observer
+        self.observer: UserInterface = observer
 
         # Game state
         self.game_state = game_state
 
         # Controls
         self.commands = []
+
+        # Graphical User Interface
+        self.selection_rect = Rect(0, 0, 0, 0)
+        self.is_selecting = False
+        self.selection_origin = Vector2(0, 0)
 
     def process_input(self):
         for event in pygame.event.get():
@@ -351,16 +364,33 @@ class EditorMode(GameMode):
                 if event.key == pygame.K_ESCAPE:
                     self.observer.on_quit()
                     break
-                if event.key == pygame.K_p:
+                elif event.key == pygame.K_p:
                     self.observer.on_play()
                     break
-                if event.key == pygame.K_s:
+                elif event.key == pygame.K_s:
                     if event.mod & pygame.KMOD_CTRL:
                         self.commands.append(SaveLevel(self.game_state))
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                x = pygame.mouse.get_pos()[0] / 3
-                y = pygame.mouse.get_pos()[1] / 3
-                self.commands.append(EditBricks(self.game_state, Vector2(x, y)))
+                self.is_selecting = True
+                self.selection_origin = Vector2(pygame.mouse.get_pos()[0], pygame.mouse.get_pos()[1])
+            elif event.type == pygame.MOUSEBUTTONUP:
+                new_rect = self.selection_rect.copy()
+                new_rect.x /= 3
+                new_rect.y /= 3
+                new_rect.w /= 3
+                new_rect.h /= 3
+                value = self.game_state.brick_grid.get_cell_world(self.selection_origin / 3)
+                self.commands.append(EditBricks(self.game_state, 1 - value, new_rect))
+                self.selection_rect.update(0, 0, 0, 0)
+                self.is_selecting = False
+
+        # Selection Rectangle
+        if self.is_selecting:
+            x = min(self.selection_origin.x, pygame.mouse.get_pos()[0])
+            y = min(self.selection_origin.y, pygame.mouse.get_pos()[1])
+            w = abs(pygame.mouse.get_pos()[0] - self.selection_origin.x)
+            h = abs(pygame.mouse.get_pos()[1] - self.selection_origin.y)
+            self.selection_rect.update(x, y, w, h)
 
     def update(self):
         for command in self.commands:
@@ -414,9 +444,12 @@ class UserInterface:
 
             self.play_game_mode.render(self.window)
 
-            # End of Frame
+            # Draw Viewport
             self.window.blit(pygame.transform.scale_by(self.play_game_mode.viewport, self.pixel_size),
                              self.window.get_rect())
+
+            # Draw Graphical User Interface
+            pygame.draw.rect(self.window, "green", self.editor_game_mode.selection_rect, 1)
             pygame.display.update()
             self.clock.tick(60)
 
