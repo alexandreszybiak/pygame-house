@@ -52,6 +52,9 @@ class Grid:
         self.cell_width: int = cell_width
         self.cell_height: int = cell_height
         self.set_region(1, 1, 1, self.width - 2, self.height)
+        with open("level.json", mode="r", encoding="utf-8") as read_file:
+            data = json.load(read_file)
+            self.cells = data
 
     @property
     def height(self):
@@ -156,6 +159,20 @@ class MoveBallsCommand(Command):
         elif ball_rect.colliderect(self.state.paddle):
             return True
         return False
+
+    def move(self, b, axis: Vector2):
+        b.movement_remainder += b.velocity * axis
+        move: Vector2 = round(b.movement_remainder * axis)
+        if move.length() == 0:
+            return
+        b.movement_remainder -= move
+        sign: int = int(copysign(1, move))
+        while move != 0:
+            move -= sign
+            if self.collide_x(b.rect.move(sign, 0), sign):
+                b.velocity.x *= -1
+                break
+            b.rect.move_ip(sign, 0)
 
     def move_x(self, b):
         b.movement_remainder.x += b.velocity.x
@@ -373,7 +390,9 @@ class UserInterface:
         # Loop properties
         self.clock = pygame.time.Clock()
         self.running = True
-        self.paused = False
+
+        # Start Mode
+        self.paused = True
 
     def on_quit(self):
         self.running = False
