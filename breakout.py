@@ -1,6 +1,6 @@
 import os
 import json
-from math import copysign
+from math import copysign, floor, ceil
 from turtledemo.penrose import start
 
 import pygame
@@ -19,8 +19,11 @@ class GameState:
     def __init__(self):
         self.area = Rect(0, 0, 160, 240)
         self.paddle = Paddle(self, Vector2(0, 200))
-        self.balls = [Ball(self, Vector2(0, 0), Vector2(1, 1))]
-        self.brick_grid = Grid(10, 8, 16, 8)
+        self.balls = [Ball(self, Vector2(0, 0), Vector2(1, -1))]
+        self.brick_grid = None
+        self.brick_grids = []
+        self.brick_width = 16
+        self.brick_height = 8
 
 
 class Entity:
@@ -47,23 +50,25 @@ class Paddle(Entity):
 
 
 class Grid:
-    def __init__(self, width, height, cell_width, cell_height):
+    def __init__(self, x, y, width, height, cell_width, cell_height):
+        self.x = x
+        self.y = y
         self.width: int = width
-        self.cells = [0 for i in range(width * height)]
+        self.cells = [1 for i in range(width * height)]
         self.cell_width: int = cell_width
         self.cell_height: int = cell_height
-        self.set_region(1, 1, 1, self.width - 2, self.height)
-        with open("level.json", mode="r", encoding="utf-8") as read_file:
-            data = json.load(read_file)
-            self.cells = data
+
+        # with open("level.json", mode="r", encoding="utf-8") as read_file:
+        # data = json.load(read_file)
+        # self.cells = data
 
     @property
     def height(self):
         return len(self.cells) // self.width
 
     def get_cell_coordinates(self, world_x, world_y):
-        x = world_x // self.cell_width
-        y = world_y // self.cell_height
+        x = (world_x - self.x) // self.cell_width
+        y = (world_y - self.y) // self.cell_height
         return x, y
 
     def get_cell(self, x, y):
@@ -106,6 +111,13 @@ class Grid:
         self.set_region(value, x1, y1, x2, y2)
 
 
+class BrickGrid(Grid):
+    def __init__(self, rect: Rect, cell_width, cell_height):
+        width = int(rect.width / cell_width)
+        height = int(rect.height / cell_height)
+        super().__init__(rect.x, rect.y, width, height, cell_width, cell_height)
+
+
 ###############################################################################
 #                                Commands                                     #
 ###############################################################################
@@ -137,35 +149,40 @@ class MoveBallsCommand(Command):
     def collide_x(self, ball_rect, x_direction):
         x = ball_rect.left if x_direction < 0 else ball_rect.right
 
-        cell_1 = self.state.brick_grid.get_cell_coordinates(x, ball_rect.top)
-        cell_2 = self.state.brick_grid.get_cell_coordinates(x, ball_rect.bottom)
-
-        if 1 in self.state.brick_grid.get_region(cell_1[0], cell_1[1], cell_2[0], cell_2[1]):
-            self.state.brick_grid.set_region(0, cell_1[0], cell_1[1], cell_2[0], cell_2[1])
-            return True
-        elif ball_rect.right > self.state.area.right:
+        if ball_rect.right > self.state.area.right:
             return True
         elif ball_rect.left < self.state.area.left:
             return True
-        elif ball_rect.colliderect(self.state.paddle):
+        elif self.state.paddle is not None and ball_rect.colliderect(self.state.paddle):
             return True
+
+        for g in self.state.brick_grids:
+            cell_1 = g.get_cell_coordinates(x, ball_rect.top)
+            cell_2 = g.get_cell_coordinates(x, ball_rect.bottom)
+
+            if 1 in g.get_region(cell_1[0], cell_1[1], cell_2[0], cell_2[1]):
+                g.set_region(0, cell_1[0], cell_1[1], cell_2[0], cell_2[1])
+                return True
+
         return False
 
     def collide_y(self, ball_rect, y_direction):
         y = ball_rect.top if y_direction < 0 else ball_rect.bottom
 
-        cell_1 = self.state.brick_grid.get_cell_coordinates(ball_rect.left, y)
-        cell_2 = self.state.brick_grid.get_cell_coordinates(ball_rect.right, y)
-
-        if 1 in self.state.brick_grid.get_region(cell_1[0], cell_1[1], cell_2[0], cell_2[1]):
-            self.state.brick_grid.set_region(0, cell_1[0], cell_1[1], cell_2[0], cell_2[1])
-            return True
-        elif ball_rect.top < self.state.area.top:
+        if ball_rect.top < self.state.area.top:
             return True
         elif ball_rect.bottom > self.state.area.bottom:
             return True
-        elif ball_rect.colliderect(self.state.paddle):
+        elif self.state.paddle is not None and ball_rect.colliderect(self.state.paddle):
             return True
+
+        for g in self.state.brick_grids:
+            cell_1 = g.get_cell_coordinates(ball_rect.left, y)
+            cell_2 = g.get_cell_coordinates(ball_rect.right, y)
+            if 1 in g.get_region(cell_1[0], cell_1[1], cell_2[0], cell_2[1]):
+                g.set_region(0, cell_1[0], cell_1[1], cell_2[0], cell_2[1])
+                return True
+
         return False
 
     def move(self, b, axis: Vector2):
@@ -211,7 +228,7 @@ class MoveBallsCommand(Command):
             b.rect.move_ip(0, sign)
 
 
-class EditBricks(Command):
+class EditBrickGrid(Command):
     def __init__(self, state, value, rect):
         self.state: GameState = state
         self.value = value
@@ -219,6 +236,22 @@ class EditBricks(Command):
 
     def run(self):
         self.state.brick_grid.set_region_world(self.value, self.rect)
+
+
+class CreateBrickGrid(Command):
+    def __init__(self, state, rect):
+        self.state: GameState = state
+        self.rect: Rect = rect
+
+    def run(self):
+        x = self.rect.left // self.state.brick_width * self.state.brick_width
+        y = self.rect.top // self.state.brick_height * self.state.brick_height
+        x2 = ceil(self.rect.right / self.state.brick_width) * self.state.brick_width
+        y2 = ceil(self.rect.bottom / self.state.brick_height) * self.state.brick_height
+
+        new_rect = Rect(x, y, x2 - x, y2 - y)
+
+        self.state.brick_grids.append(BrickGrid(new_rect, self.state.brick_width, self.state.brick_height))
 
 
 class SaveLevel(Command):
@@ -250,17 +283,19 @@ class EntityLayer(RenderingLayer):
 
 class TileLayer(RenderingLayer):
     def __init__(self, grid):
-        self.grid: Grid = grid
+        self.grids: list[BrickGrid] = grid
 
     def render(self, surface):
-        for count, cell in enumerate(self.grid.cells):
-            if cell == 0:
-                continue
-            x = count % self.grid.width * self.grid.cell_width
-            y = count // self.grid.width * self.grid.cell_height
-            w = self.grid.cell_width - 1
-            h = self.grid.cell_height - 1
-            pygame.draw.rect(surface, 'white', Rect(x, y, w, h))
+        colors = ["red", "green", "blue", "yellow", "orange", "purple"]
+        for color, g in zip(colors, self.grids):
+            for count, cell in enumerate(g.cells):
+                if cell == 0:
+                    continue
+                x = count % g.width * g.cell_width + g.x
+                y = count // g.width * g.cell_height + g.y
+                w = g.cell_width - 1
+                h = g.cell_height - 1
+                pygame.draw.rect(surface, color, Rect(x, y, w, h))
 
 
 ###############################################################################
@@ -292,7 +327,7 @@ class PlayGameMode(GameMode):
         for b in self.game_state.balls:
             entity_layer.entities.append(b)
 
-        tile_layer = TileLayer(self.game_state.brick_grid)
+        tile_layer = TileLayer(self.game_state.brick_grids)
 
         self.rendering_layers = [entity_layer, tile_layer]
         self.viewport = Surface(self.game_state.area.size)
@@ -379,8 +414,8 @@ class EditorMode(GameMode):
                 new_rect.y /= 3
                 new_rect.w /= 3
                 new_rect.h /= 3
-                value = self.game_state.brick_grid.get_cell_world(self.selection_origin / 3)
-                self.commands.append(EditBricks(self.game_state, 1 - value, new_rect))
+                # value = self.game_state.brick_grid.get_cell_world(self.selection_origin / 3)
+                self.commands.append(CreateBrickGrid(self.game_state, new_rect))
                 self.selection_rect.update(0, 0, 0, 0)
                 self.is_selecting = False
 
