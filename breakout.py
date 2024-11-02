@@ -50,17 +50,19 @@ class Paddle(Entity):
 
 
 class Grid:
-    def __init__(self, x, y, width, height, cell_width, cell_height):
+    def __init__(self, x, y, width, cell_width, cell_height):
         self.x = x
         self.y = y
         self.width: int = width
-        self.cells = [1 for i in range(width * height)]
+        self.cells = []
         self.cell_width: int = cell_width
         self.cell_height: int = cell_height
 
-        # with open("level.json", mode="r", encoding="utf-8") as read_file:
-        # data = json.load(read_file)
-        # self.cells = data
+    def fill(self, value):
+        pass
+
+    def fill_with_data(self, data):
+        self.cells = data
 
     @property
     def height(self):
@@ -111,13 +113,6 @@ class Grid:
         self.set_region(value, x1, y1, x2, y2)
 
 
-class BrickGrid(Grid):
-    def __init__(self, rect: Rect, cell_width, cell_height):
-        width = int(rect.width / cell_width)
-        height = int(rect.height / cell_height)
-        super().__init__(rect.x, rect.y, width, height, cell_width, cell_height)
-
-
 ###############################################################################
 #                                Commands                                     #
 ###############################################################################
@@ -156,15 +151,16 @@ class MoveBallsCommand(Command):
         elif self.state.paddle is not None and ball_rect.colliderect(self.state.paddle):
             return True
 
+        collide = False
         for g in self.state.brick_grids:
             cell_1 = g.get_cell_coordinates(x, ball_rect.top)
             cell_2 = g.get_cell_coordinates(x, ball_rect.bottom)
 
             if 1 in g.get_region(cell_1[0], cell_1[1], cell_2[0], cell_2[1]):
                 g.set_region(0, cell_1[0], cell_1[1], cell_2[0], cell_2[1])
-                return True
+                collide = True
 
-        return False
+        return collide
 
     def collide_y(self, ball_rect, y_direction):
         y = ball_rect.top if y_direction < 0 else ball_rect.bottom
@@ -176,14 +172,15 @@ class MoveBallsCommand(Command):
         elif self.state.paddle is not None and ball_rect.colliderect(self.state.paddle):
             return True
 
+        collide = False
         for g in self.state.brick_grids:
             cell_1 = g.get_cell_coordinates(ball_rect.left, y)
             cell_2 = g.get_cell_coordinates(ball_rect.right, y)
             if 1 in g.get_region(cell_1[0], cell_1[1], cell_2[0], cell_2[1]):
                 g.set_region(0, cell_1[0], cell_1[1], cell_2[0], cell_2[1])
-                return True
+                collide = True
 
-        return False
+        return collide
 
     def move(self, b, axis: Vector2):
         b.movement_remainder += b.velocity * axis
@@ -244,14 +241,31 @@ class CreateBrickGrid(Command):
         self.rect: Rect = rect
 
     def run(self):
-        x = self.rect.left // self.state.brick_width * self.state.brick_width
-        y = self.rect.top // self.state.brick_height * self.state.brick_height
-        x2 = ceil(self.rect.right / self.state.brick_width) * self.state.brick_width
-        y2 = ceil(self.rect.bottom / self.state.brick_height) * self.state.brick_height
+        x = self.rect.left // self.state.brick_width
+        y = self.rect.top // self.state.brick_height
+        w = int(ceil(self.rect.right / self.state.brick_width)) - x
+        h = int(ceil(self.rect.bottom / self.state.brick_height)) - y
 
-        new_rect = Rect(x, y, x2 - x, y2 - y)
+        new_grid = Grid(x * self.state.brick_width, y * self.state.brick_height, w, self.state.brick_width,
+                        self.state.brick_height)
+        new_grid.cells = [1 for i in range(w * h)]
+        self.state.brick_grids.append(new_grid)
 
-        self.state.brick_grids.append(BrickGrid(new_rect, self.state.brick_width, self.state.brick_height))
+
+class LoadLevel(Command):
+    def __init__(self, state):
+        self.state: GameState = state
+
+    def run(self):
+        with (open("level.json", mode="r", encoding="utf-8") as read_file):
+            data = json.load(read_file)
+            for grid_data in data:
+                x = grid_data["x"]
+                y = grid_data["y"]
+                w = grid_data["width"]
+                new_grid: Grid = Grid(x, y, w, self.state.brick_width, self.state.brick_height)
+                new_grid.fill_with_data(grid_data["cells"])
+                self.state.brick_grids.append(new_grid)
 
 
 class SaveLevel(Command):
@@ -259,8 +273,12 @@ class SaveLevel(Command):
         self.state: GameState = state
 
     def run(self):
+        level = []
+        for g in self.state.brick_grids:
+            level.append({"x": g.x, "y": g.y, "width": g.width, "cells": g.cells})
+
         with open("level.json", mode="w", encoding="utf-8") as write_file:
-            json.dump(self.state.brick_grid.cells, write_file)
+            json.dump(level, write_file)
 
 
 ###############################################################################
@@ -447,6 +465,7 @@ class UserInterface:
         # Modes
         self.play_game_mode = PlayGameMode(self)
         self.editor_game_mode = EditorMode(self, self.play_game_mode.game_state)
+        LoadLevel(self.play_game_mode.game_state).run()
 
         # Window
         self.window = pygame.display.set_mode(self.play_game_mode.viewport.get_rect().scale_by(3, 3).size)
