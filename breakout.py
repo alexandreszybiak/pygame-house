@@ -300,10 +300,14 @@ class EntityLayer(RenderingLayer):
 
 
 class TileLayer(RenderingLayer):
-    def __init__(self, grid):
-        self.grids: list[BrickGrid] = grid
+    def __init__(self, grids):
+        self.grids: list[Grid] = grids
+        self.tile_set = pygame.image.load("8_16_dual.png")
+        self.tile_set.set_colorkey((0, 0, 0))
 
     def render(self, surface):
+        self.render_auto_tile(surface)
+        return
         colors = ["red", "green", "blue", "yellow", "orange", "purple"]
         for color, g in zip(colors, self.grids):
             for count, cell in enumerate(g.cells):
@@ -314,6 +318,25 @@ class TileLayer(RenderingLayer):
                 w = g.cell_width - 1
                 h = g.cell_height - 1
                 pygame.draw.rect(surface, color, Rect(x, y, w, h))
+
+    def render_auto_tile(self, surface: Surface):
+        for g in self.grids:
+            for x in range(-1, g.width):
+                for y in range(-1, g.height):
+                    draw_x = x * g.cell_width + g.x + (g.cell_width / 2)
+                    draw_y = y * g.cell_height + g.y + (g.cell_height / 2)
+                    draw_w = g.cell_width
+                    draw_h = g.cell_height
+
+                    value = g.get_cell(x, y)
+                    value += g.get_cell(x + 1, y) * 2
+                    value += g.get_cell(x, y + 1) * 4
+                    value += g.get_cell(x + 1, y + 1) * 8
+
+                    dest = Rect(draw_x, draw_y, draw_w, draw_h)
+                    area = Rect(value * g.cell_width, 0, g.cell_width, g.cell_height)
+
+                    surface.blit(self.tile_set, dest, area)
 
 
 ###############################################################################
@@ -347,7 +370,7 @@ class PlayGameMode(GameMode):
 
         tile_layer = TileLayer(self.game_state.brick_grids)
 
-        self.rendering_layers = [entity_layer, tile_layer]
+        self.rendering_layers = [tile_layer, entity_layer]
         self.viewport = Surface(self.game_state.area.size)
 
         # Controls
