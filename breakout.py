@@ -112,6 +112,11 @@ class Grid:
         y2: int = int(rect.bottom / self.cell_height)
         self.set_region(value, x1, y1, x2, y2)
 
+class BrickGrid(Grid):
+    def __init__(self, x, y, width, cell_width, cell_height, environment):
+        super().__init__(x, y, width, cell_width, cell_height)
+        self.environment = environment
+
 
 ###############################################################################
 #                                Commands                                     #
@@ -246,8 +251,8 @@ class CreateBrickGrid(Command):
         w = int(ceil(self.rect.right / self.state.brick_width)) - x
         h = int(ceil(self.rect.bottom / self.state.brick_height)) - y
 
-        new_grid = Grid(x * self.state.brick_width, y * self.state.brick_height, w, self.state.brick_width,
-                        self.state.brick_height)
+        new_grid = BrickGrid(x * self.state.brick_width, y * self.state.brick_height, w, self.state.brick_width,
+                        self.state.brick_height, 1)
         new_grid.cells = [1 for i in range(w * h)]
         self.state.brick_grids.append(new_grid)
 
@@ -263,7 +268,8 @@ class LoadLevel(Command):
                 x = grid_data["x"]
                 y = grid_data["y"]
                 w = grid_data["width"]
-                new_grid: Grid = Grid(x, y, w, self.state.brick_width, self.state.brick_height)
+                env = grid_data["env"]
+                new_grid: BrickGrid = BrickGrid(x, y, w, self.state.brick_width, self.state.brick_height, env)
                 new_grid.fill_with_data(grid_data["cells"])
                 self.state.brick_grids.append(new_grid)
 
@@ -275,7 +281,7 @@ class SaveLevel(Command):
     def run(self):
         level = []
         for g in self.state.brick_grids:
-            level.append({"x": g.x, "y": g.y, "width": g.width, "cells": g.cells})
+            level.append({"x": g.x, "y": g.y, "width": g.width, "env": g.environment, "cells": g.cells})
 
         with open("level.json", mode="w", encoding="utf-8") as write_file:
             json.dump(level, write_file)
@@ -301,23 +307,17 @@ class EntityLayer(RenderingLayer):
 
 class TileLayer(RenderingLayer):
     def __init__(self, grids):
-        self.grids: list[Grid] = grids
-        self.tile_set = pygame.image.load("8_16_dual.png")
-        self.tile_set.set_colorkey((0, 0, 0))
+        self.grids: list[BrickGrid] = grids
+        files = ["tiles_dual_16_8_garden.png", "tiles_dual_16_8_bathroom.png"]
+        self.tile_sets = []
+        for f in files:
+            i = pygame.image.load(f)
+            i.set_colorkey((0, 0, 0))
+            self.tile_sets.append(i)
 
     def render(self, surface):
         self.render_auto_tile(surface)
         return
-        colors = ["red", "green", "blue", "yellow", "orange", "purple"]
-        for color, g in zip(colors, self.grids):
-            for count, cell in enumerate(g.cells):
-                if cell == 0:
-                    continue
-                x = count % g.width * g.cell_width + g.x
-                y = count // g.width * g.cell_height + g.y
-                w = g.cell_width - 1
-                h = g.cell_height - 1
-                pygame.draw.rect(surface, color, Rect(x, y, w, h))
 
     def render_auto_tile(self, surface: Surface):
         for g in self.grids:
@@ -336,7 +336,7 @@ class TileLayer(RenderingLayer):
                     dest = Rect(draw_x, draw_y, draw_w, draw_h)
                     area = Rect(value * g.cell_width, 0, g.cell_width, g.cell_height)
 
-                    surface.blit(self.tile_set, dest, area)
+                    surface.blit(self.tile_sets[g.environment], dest, area)
 
 
 ###############################################################################
