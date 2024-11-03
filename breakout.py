@@ -18,12 +18,21 @@ os.environ['SDL_VIDEO_CENTERED'] = '1'
 class GameState:
     def __init__(self):
         self.area = Rect(0, 0, 160, 240)
-        self.paddle = Paddle(self, Vector2(0, 200))
-        self.balls = [Ball(self, Vector2(0, 0), Vector2(1, -1))]
+        self.paddle: Paddle = Paddle(self, Vector2(0, 200))
+        self.paddle.rect.centerx = self.area.centerx
+        self.balls: list[Ball] = []
         self.brick_grid = None
-        self.brick_grids = []
+        self.brick_grids: list[BrickGrid] = []
         self.brick_width = 16
         self.brick_height = 8
+        self.observers: list[GameStateObserver] = []
+
+    def add_observer(self, observer):
+        self.observers.append(observer)
+
+    def notify_ball_created(self, ball):
+        for observer in self.observers:
+            observer.on_ball_created(ball)
 
 
 class Entity:
@@ -40,6 +49,7 @@ class Ball(Entity):
         self.velocity = velocity
         self.rect = Rect(position.x, position.y, 4, 4)
         self.rect.center = self.state.area.center
+        self.is_stuck_on_paddle = False
 
 
 class Paddle(Entity):
@@ -112,6 +122,7 @@ class Grid:
         y2: int = int(rect.bottom / self.cell_height)
         self.set_region(value, x1, y1, x2, y2)
 
+
 class BrickGrid(Grid):
     def __init__(self, x, y, width, cell_width, cell_height, environment):
         super().__init__(x, y, width, cell_width, cell_height)
@@ -127,14 +138,36 @@ class Command:
         raise NotImplementedError()
 
 
+class LaunchBallCommand(Command):
+    def __init__(self, state: GameState):
+        self.state = state
+
+    def run(self):
+        b = self.state.balls[0]
+        b.is_stuck_on_paddle = False
+        b.velocity = Vector2(1, -1)
+
+
 class PaddleMoveCommand(Command):
     def __init__(self, state, paddle, move_direction):
-        self.state = state
+        self.state: GameState = state
         self.paddle = paddle
         self.move_direction = move_direction
 
     def run(self):
         self.paddle.rect.move_ip(self.paddle.move_speed * self.move_direction, 0)
+
+
+class InitBallCommand(Command):
+    def __init__(self, state: GameState):
+        self.state = state
+
+    def run(self):
+        new_ball = Ball(self.state, Vector2(0, 0), Vector2(0, 0))
+        new_ball.is_stuck_on_paddle = True
+        new_ball.rect.midbottom = self.state.paddle.rect.midtop
+        self.state.balls.append(new_ball)
+        self.state.notify_ball_created(new_ball)
 
 
 class MoveBallsCommand(Command):
@@ -143,6 +176,9 @@ class MoveBallsCommand(Command):
 
     def run(self):
         for b in self.state.balls:
+            if b.is_stuck_on_paddle:
+                b.rect.midbottom = self.state.paddle.rect.midtop
+                continue
             self.move_y(b)
             self.move_x(b)
 
@@ -252,7 +288,7 @@ class CreateBrickGrid(Command):
         h = int(ceil(self.rect.bottom / self.state.brick_height)) - y
 
         new_grid = BrickGrid(x * self.state.brick_width, y * self.state.brick_height, w, self.state.brick_width,
-                        self.state.brick_height, 1)
+                             self.state.brick_height, 1)
         new_grid.cells = [1 for i in range(w * h)]
         self.state.brick_grids.append(new_grid)
 
@@ -290,7 +326,12 @@ class SaveLevel(Command):
 ###############################################################################
 #                                Rendering                                    #
 ###############################################################################
-class RenderingLayer:
+class GameStateObserver:
+    def on_ball_created(self, ball):
+        pass
+
+
+class RenderingLayer(GameStateObserver):
     def render(self, surface):
         raise NotImplementedError()
 
@@ -298,6 +339,9 @@ class RenderingLayer:
 class EntityLayer(RenderingLayer):
     def __init__(self):
         self.entities = []
+
+    def on_ball_created(self, ball):
+        self.entities.append(ball)
 
     def render(self, surface):
         # Render entities
@@ -364,9 +408,8 @@ class PlayGameMode(GameMode):
 
         # Layers
         entity_layer = EntityLayer()
+        self.game_state.add_observer(entity_layer)
         entity_layer.entities.append(self.game_state.paddle)
-        for b in self.game_state.balls:
-            entity_layer.entities.append(b)
 
         tile_layer = TileLayer(self.game_state.brick_grids)
 
@@ -389,6 +432,9 @@ class PlayGameMode(GameMode):
                     break
                 if event.key == pygame.K_p:
                     self.observer.on_edit()
+                    break
+                if event.key == pygame.K_UP:
+                    self.commands.append(LaunchBallCommand(self.game_state))
                     break
         keys = pygame.key.get_pressed()
         move_direction = -keys[pygame.K_LEFT] + keys[pygame.K_RIGHT]
@@ -499,7 +545,10 @@ class UserInterface:
         self.running = True
 
         # Start Mode
-        self.paused = True
+        self.paused = False
+
+        # Init Ball
+        InitBallCommand(self.play_game_mode.game_state).run()
 
     def on_quit(self):
         self.running = False
