@@ -92,7 +92,9 @@ class Grid:
         value: int = self.cells[index]
         return value
 
-    def set_cell(self, value, x, y):
+    def set_cell(self, value, x: int, y: int):
+        if x < 0 or x >= self.width: return
+        if y < 0 or y >= self.height: return
         index = x + y * self.width
         if 0 <= index < len(self.cells):
             self.cells[index] = value
@@ -110,7 +112,7 @@ class Grid:
                 cells.append(self.get_cell(x, y))
         return cells
 
-    def set_region(self, value, x1, y1, x2, y2):
+    def set_region(self, value, x1: int, y1: int, x2: int, y2: int):
         for x in range(x1, x2 + 1):
             for y in range(y1, y2 + 1):
                 self.set_cell(value, x, y)
@@ -145,7 +147,7 @@ class LaunchBallCommand(Command):
     def run(self):
         b = self.state.balls[0]
         b.is_stuck_on_paddle = False
-        b.velocity = Vector2(1, -1)
+        b.velocity = Vector2(2, -2)
 
 
 class PaddleMoveCommand(Command):
@@ -196,7 +198,6 @@ class MoveBallsCommand(Command):
         for g in self.state.brick_grids:
             cell_1 = g.get_cell_coordinates(x, ball_rect.top)
             cell_2 = g.get_cell_coordinates(x, ball_rect.bottom)
-
             if 1 in g.get_region(cell_1[0], cell_1[1], cell_2[0], cell_2[1]):
                 g.set_region(0, cell_1[0], cell_1[1], cell_2[0], cell_2[1])
                 collide = True
@@ -218,6 +219,7 @@ class MoveBallsCommand(Command):
             cell_1 = g.get_cell_coordinates(ball_rect.left, y)
             cell_2 = g.get_cell_coordinates(ball_rect.right, y)
             if 1 in g.get_region(cell_1[0], cell_1[1], cell_2[0], cell_2[1]):
+                print(cell_1, cell_2)
                 g.set_region(0, cell_1[0], cell_1[1], cell_2[0], cell_2[1])
                 collide = True
 
