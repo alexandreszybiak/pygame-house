@@ -12,52 +12,8 @@ os.environ['SDL_VIDEO_CENTERED'] = '1'
 
 
 ###############################################################################
-#                               Game State                                    #
+#                                 Engine                                      #
 ###############################################################################
-
-class GameState:
-    def __init__(self):
-        self.area = Rect(0, 0, 160, 240)
-        self.paddle: Paddle = Paddle(self, Vector2(0, 200))
-        self.paddle.rect.centerx = self.area.centerx
-        self.balls: list[Ball] = []
-        self.brick_grid = None
-        self.brick_grids: list[BrickGrid] = []
-        self.brick_width = 16
-        self.brick_height = 8
-        self.observers: list[GameStateObserver] = []
-
-    def add_observer(self, observer):
-        self.observers.append(observer)
-
-    def notify_ball_created(self, ball):
-        for observer in self.observers:
-            observer.on_ball_created(ball)
-
-
-class Entity:
-    def __init__(self, state: GameState, position):
-        self.state: GameState = state
-        self.position = position
-        self.rect = None
-        self.movement_remainder = Vector2()
-
-
-class Ball(Entity):
-    def __init__(self, state, position, velocity):
-        super().__init__(state, position)
-        self.velocity = velocity
-        self.rect = Rect(position.x, position.y, 4, 4)
-        self.rect.center = self.state.area.center
-        self.is_stuck_on_paddle = False
-
-
-class Paddle(Entity):
-    def __init__(self, state, position: Vector2):
-        super().__init__(state, position)
-        self.move_speed = 2
-        self.rect = Rect(position.x, position.y, 40, 4)
-
 
 class Grid:
     def __init__(self, x, y, width, cell_width, cell_height):
@@ -112,6 +68,13 @@ class Grid:
                 cells.append(self.get_cell(x, y))
         return cells
 
+    def get_region_coordinate_and_value(self, x1, y1, x2, y2) -> list[tuple[int, int, int]]:
+        cells: list[tuple[int, int, int]] = []
+        for x in range(x1, x2 + 1):
+            for y in range(y1, y2 + 1):
+                cells.append((x, y, self.get_cell(x, y)))
+        return cells
+
     def set_region(self, value, x1: int, y1: int, x2: int, y2: int):
         for x in range(x1, x2 + 1):
             for y in range(y1, y2 + 1):
@@ -125,10 +88,90 @@ class Grid:
         self.set_region(value, x1, y1, x2, y2)
 
 
+###############################################################################
+#                               Game State                                    #
+###############################################################################
+
+class GameState:
+    def __init__(self):
+        self.area = Rect(0, 0, 160, 240)
+        self.paddle: Paddle = Paddle(self, Vector2(0, 200))
+        self.paddle.rect.centerx = self.area.centerx
+        self.balls: list[Ball] = []
+        self.brick_grid = None
+        self.brick_grids: list[BrickGrid] = []
+        self.collisions: list[Collision] = []
+        self.brick_width = 16
+        self.brick_height = 8
+        self.observers: list[GameStateObserver] = []
+
+    def add_observer(self, observer):
+        self.observers.append(observer)
+
+    def notify_ball_created(self, ball):
+        for observer in self.observers:
+            observer.on_ball_created(ball)
+
+
+class Entity:
+    def __init__(self, state: GameState, position):
+        self.state: GameState = state
+        self.position = position
+        self.velocity = Vector2(0, 0)
+        self.rect = None
+        self.movement_remainder = Vector2()
+
+
+class Ball(Entity):
+    def __init__(self, state, position):
+        super().__init__(state, position)
+        self.rect = Rect(position.x, position.y, 4, 4)
+        self.rect.center = self.state.area.center
+        self.is_stuck_on_paddle = False
+
+
+class Paddle(Entity):
+    def __init__(self, state, position: Vector2):
+        super().__init__(state, position)
+        self.move_speed = 2
+        self.rect = Rect(position.x, position.y, 40, 4)
+
+
 class BrickGrid(Grid):
     def __init__(self, x, y, width, cell_width, cell_height, environment):
         super().__init__(x, y, width, cell_width, cell_height)
         self.environment = environment
+
+
+class Collision:
+    def __init__(self, collider: Entity, axis: Vector2):
+        self.collider = collider
+        self.axis = axis
+
+    def process(self):
+        pass
+
+
+class GridCollision(Collision):
+    def __init__(self, collider: Entity, axis: Vector2, brick_grid: BrickGrid, hit_cells):
+        super().__init__(collider, axis)
+        self.brick_grid = brick_grid
+        self.hit_cells = hit_cells
+
+    def process(self):
+        for c in self.hit_cells:
+            self.brick_grid.set_cell(0, c[0], c[1])
+
+
+class BallCollision(Collision):
+    def __init__(self, collider: Entity, axis: Vector2):
+        super().__init__(collider, axis)
+
+    def process(self):
+        if self.axis.y == 0:
+            self.collider.velocity.x *= -1
+        else:
+            self.collider.velocity.y *= -1
 
 
 ###############################################################################
@@ -147,7 +190,7 @@ class LaunchBallCommand(Command):
     def run(self):
         b = self.state.balls[0]
         b.is_stuck_on_paddle = False
-        b.velocity = Vector2(2, -2)
+        b.velocity = Vector2(1, -1)
 
 
 class PaddleMoveCommand(Command):
@@ -165,7 +208,7 @@ class InitBallCommand(Command):
         self.state = state
 
     def run(self):
-        new_ball = Ball(self.state, Vector2(0, 0), Vector2(0, 0))
+        new_ball = Ball(self.state, Vector2(0, 0))
         new_ball.is_stuck_on_paddle = True
         new_ball.rect.midbottom = self.state.paddle.rect.midtop
         self.state.balls.append(new_ball)
@@ -184,88 +227,108 @@ class MoveBallsCommand(Command):
             self.move_y(b)
             self.move_x(b)
 
-    def collide_x(self, ball_rect, x_direction):
-        x = ball_rect.left if x_direction < 0 else ball_rect.right
-
-        if ball_rect.right > self.state.area.right:
-            return True
-        elif ball_rect.left < self.state.area.left:
-            return True
-        elif self.state.paddle is not None and ball_rect.colliderect(self.state.paddle):
-            return True
-
+    def collide_x(self, ball: Ball, x_direction):
+        axis = Vector2(1, 0)
         collide = False
+        ball_rect = ball.rect.move(x_direction, 0)
+
+        # Paddle
+        if self.state.paddle is not None and ball_rect.colliderect(self.state.paddle):
+            collide = True
+
+        # Area Boundaries
+        if ball_rect.right > self.state.area.right:
+            collide = True
+        elif ball_rect.left < self.state.area.left:
+            collide = True
+
+        # Grids
+        x = ball_rect.left if x_direction < 0 else ball_rect.right
+        grids: list[tuple[BrickGrid, tuple[int, int]]] = []
         for g in self.state.brick_grids:
             cell_1 = g.get_cell_coordinates(x, ball_rect.top)
             cell_2 = g.get_cell_coordinates(x, ball_rect.bottom)
-            if 1 in g.get_region(cell_1[0], cell_1[1], cell_2[0], cell_2[1]):
-                g.set_region(0, cell_1[0], cell_1[1], cell_2[0], cell_2[1])
+            cells = g.get_region_coordinate_and_value(cell_1[0], cell_1[1], cell_2[0], cell_2[1])
+
+            hit_cells = [c for c in cells if c[2]]
+
+            if hit_cells:
+                self.state.collisions.append(GridCollision(ball, axis, g, hit_cells))
                 collide = True
+
+        if collide:
+            self.state.collisions.append(BallCollision(ball, axis))
 
         return collide
 
-    def collide_y(self, ball_rect, y_direction):
-        y = ball_rect.top if y_direction < 0 else ball_rect.bottom
-
-        if ball_rect.top < self.state.area.top:
-            return True
-        elif ball_rect.bottom > self.state.area.bottom:
-            return True
-        elif self.state.paddle is not None and ball_rect.colliderect(self.state.paddle):
-            return True
-
+    def collide_y(self, ball, y_direction):
+        axis = Vector2(0, 1)
         collide = False
+        ball_rect = ball.rect.move(0, y_direction)
+
+        # Paddle
+        if self.state.paddle is not None and ball_rect.colliderect(self.state.paddle):
+            collide = True
+
+        # Area Boundaries
+        if ball_rect.top < self.state.area.top:
+            collide = True
+        elif ball_rect.bottom > self.state.area.bottom:
+            collide = True
+
+        # Grids
+        y = ball_rect.top if y_direction < 0 else ball_rect.bottom
         for g in self.state.brick_grids:
             cell_1 = g.get_cell_coordinates(ball_rect.left, y)
             cell_2 = g.get_cell_coordinates(ball_rect.right, y)
-            if 1 in g.get_region(cell_1[0], cell_1[1], cell_2[0], cell_2[1]):
-                print(cell_1, cell_2)
-                g.set_region(0, cell_1[0], cell_1[1], cell_2[0], cell_2[1])
+            cells = g.get_region_coordinate_and_value(cell_1[0], cell_1[1], cell_2[0], cell_2[1])
+
+            hit_cells = [c for c in cells if c[2]]
+
+            if hit_cells:
+                self.state.collisions.append(GridCollision(ball, axis, g, hit_cells))
                 collide = True
+
+        if collide:
+            self.state.collisions.append(BallCollision(ball, axis))
 
         return collide
 
-    def move(self, b, axis: Vector2):
-        b.movement_remainder += b.velocity * axis
-        move: Vector2 = round(b.movement_remainder * axis)
-        if move.length() == 0:
-            return
-        b.movement_remainder -= move
-        sign: int = int(copysign(1, move))
-        while move != 0:
-            move -= sign
-            if self.collide_x(b.rect.move(sign, 0), sign):
-                b.velocity.x *= -1
-                break
-            b.rect.move_ip(sign, 0)
-
-    def move_x(self, b):
-        b.movement_remainder.x += b.velocity.x
-        move: int = round(b.movement_remainder.x)
+    def move_x(self, ball):
+        ball.movement_remainder.x += ball.velocity.x
+        move: int = round(ball.movement_remainder.x)
         if move == 0:
             return
-        b.movement_remainder.x -= move
+        ball.movement_remainder.x -= move
         sign: int = int(copysign(1, move))
         while move != 0:
             move -= sign
-            if self.collide_x(b.rect.move(sign, 0), sign):
-                b.velocity.x *= -1
+            if self.collide_x(ball, sign):
                 break
-            b.rect.move_ip(sign, 0)
+            ball.rect.move_ip(sign, 0)
 
-    def move_y(self, b):
-        b.movement_remainder.y += b.velocity.y
-        move: int = round(b.movement_remainder.y)
+    def move_y(self, ball):
+        ball.movement_remainder.y += ball.velocity.y
+        move: int = round(ball.movement_remainder.y)
         if move == 0:
             return
-        b.movement_remainder.y -= move
+        ball.movement_remainder.y -= move
         sign: int = int(copysign(1, move))
         while move != 0:
             move -= sign
-            if self.collide_y(b.rect.move(0, sign), sign):
-                b.velocity.y *= -1
+            if self.collide_y(ball, sign):
                 break
-            b.rect.move_ip(0, sign)
+            ball.rect.move_ip(0, sign)
+
+
+class RunCollisionsCommand(Command):
+    def __init__(self, state):
+        self.state: GameState = state
+
+    def run(self):
+        for c in self.state.collisions:
+            c.process()
+        self.state.collisions.clear()
 
 
 class EditBrickGrid(Command):
@@ -420,7 +483,7 @@ class PlayGameMode(GameMode):
 
         # Controls
         self.paddle = self.game_state.paddle
-        self.commands = []
+        self.commands: list[Command] = []
 
     def process_input(self):
         # Pygame events (close & keyboard)
@@ -449,6 +512,9 @@ class PlayGameMode(GameMode):
         # Move balls
         self.commands.append(MoveBallsCommand(self.game_state))
 
+        # Run Collisions
+        self.commands.append(RunCollisionsCommand(self.game_state))
+
         # Apply gravity
 
     def update(self):
@@ -472,7 +538,7 @@ class EditorMode(GameMode):
         self.game_state = game_state
 
         # Controls
-        self.commands = []
+        self.commands: list[Command] = []
 
         # Graphical User Interface
         self.selection_rect = Rect(0, 0, 0, 0)
