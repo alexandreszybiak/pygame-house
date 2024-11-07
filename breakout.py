@@ -118,7 +118,7 @@ class Entity:
         self.state: GameState = state
         self.position = position
         self.velocity = Vector2(0, 0)
-        self.rect = None
+        self.rect: Rect = Rect(0, 0, 1, 1)
         self.movement_remainder = Vector2()
 
 
@@ -168,10 +168,33 @@ class BallCollision(Collision):
         super().__init__(collider, axis)
 
     def process(self):
-        if self.axis.y == 0:
-            self.collider.velocity.x *= -1
+        self.collider.velocity.reflect_ip(self.axis)
+
+
+class BallCollisionWithPaddle(Collision):
+    def __init__(self, collider: Entity, axis: Vector2, paddle: Paddle):
+        super().__init__(collider, axis)
+        self.paddle = paddle
+
+    def process(self):
+        if self.axis.x == 0:
+            offset = (self.collider.rect.centerx - self.paddle.rect.centerx) / (self.paddle.rect.w / 2)
+            ball_orientation = self.collider.velocity.angle_to(Vector2(0, 0))
+            angle = offset * 20
+            rounded_normal = Vector2(0, 1).rotate(angle)
+            flat_normal = Vector2(0, 1)
+            new_velocity = self.collider.velocity.reflect(rounded_normal)
+            new_angle = new_velocity.angle_to(Vector2(0, 0))
+
+            if new_angle < 20 or new_angle > 160:
+                new_velocity = self.collider.velocity.reflect(flat_normal)
+
+            self.collider.velocity.update(new_velocity)
+
+            self.collider.velocity *= 1.25
+            self.collider.velocity.clamp_magnitude_ip(3)
         else:
-            self.collider.velocity.y *= -1
+            self.collider.velocity.reflect_ip(self.axis)
 
 
 ###############################################################################
@@ -268,13 +291,16 @@ class MoveBallsCommand(Command):
 
         # Paddle
         if self.state.paddle is not None and ball_rect.colliderect(self.state.paddle):
-            collide = True
+            self.state.collisions.append(BallCollisionWithPaddle(ball, axis, self.state.paddle))
+            return True
 
         # Area Boundaries
         if ball_rect.top < self.state.area.top:
-            collide = True
+            self.state.collisions.append(BallCollision(ball, axis))
+            return True
         elif ball_rect.bottom > self.state.area.bottom:
-            collide = True
+            self.state.collisions.append(BallCollision(ball, axis))
+            return True
 
         # Grids
         y = ball_rect.top if y_direction < 0 else ball_rect.bottom
