@@ -112,6 +112,10 @@ class GameState:
         for observer in self.observers:
             observer.on_ball_created(ball)
 
+    def notify_last_ball_lost(self):
+        for observer in self.observers:
+            observer.on_last_ball_lost()
+
 
 class Entity:
     def __init__(self, state: GameState, position):
@@ -177,6 +181,7 @@ class BallCollisionWithPaddle(Collision):
         self.paddle = paddle
 
     def process(self):
+        # Bounce
         if self.axis.x == 0:
             offset = (self.collider.rect.centerx - self.paddle.rect.centerx) / (self.paddle.rect.w / 2)
             ball_orientation = self.collider.velocity.angle_to(Vector2(0, 0))
@@ -219,11 +224,15 @@ class LaunchBallCommand(Command):
 class PaddleMoveCommand(Command):
     def __init__(self, state, paddle, move_direction):
         self.state: GameState = state
-        self.paddle = paddle
+        self.paddle: Paddle = paddle
         self.move_direction = move_direction
 
     def run(self):
         self.paddle.rect.move_ip(self.paddle.move_speed * self.move_direction, 0)
+        self.paddle.rect.clamp_ip(self.state.area)
+        for b in self.state.balls:
+            if self.paddle.rect.colliderect(b):
+                b.rect.bottom = self.paddle.rect.top
 
 
 class InitBallCommand(Command):
@@ -249,6 +258,8 @@ class MoveBallsCommand(Command):
                 continue
             self.move_y(b)
             self.move_x(b)
+            if not self.state.area.colliderect(b.rect):
+                self.state.balls.remove(b)
 
     def collide_x(self, ball: Ball, x_direction):
         axis = Vector2(1, 0)
@@ -296,9 +307,6 @@ class MoveBallsCommand(Command):
 
         # Area Boundaries
         if ball_rect.top < self.state.area.top:
-            self.state.collisions.append(BallCollision(ball, axis))
-            return True
-        elif ball_rect.bottom > self.state.area.bottom:
             self.state.collisions.append(BallCollision(ball, axis))
             return True
 
@@ -421,6 +429,9 @@ class GameStateObserver:
     def on_ball_created(self, ball):
         pass
 
+    def on_last_ball_lost(self):
+        pass
+
 
 class RenderingLayer(GameStateObserver):
     def render(self, surface):
@@ -489,7 +500,7 @@ class GameMode:
         pass
 
 
-class PlayGameMode(GameMode):
+class PlayGameMode(GameMode, GameStateObserver):
     def __init__(self, observer):
         # Observer
         self.observer = observer
@@ -530,6 +541,10 @@ class PlayGameMode(GameMode):
         keys = pygame.key.get_pressed()
         move_direction = -keys[pygame.K_LEFT] + keys[pygame.K_RIGHT]
 
+        # Init Ball
+        if not self.game_state.balls:
+            InitBallCommand(self.game_state).run()
+
         # Keyboard controls the moves of the player's unit
         if move_direction != 0:
             command = PaddleMoveCommand(self.game_state, self.paddle, move_direction)
@@ -553,6 +568,9 @@ class PlayGameMode(GameMode):
 
         for l in self.rendering_layers:
             l.render(self.viewport)
+
+    def on_last_ball_lost(self):
+        pass
 
 
 class EditorMode(GameMode):
@@ -641,8 +659,6 @@ class UserInterface:
         # Start Mode
         self.paused = False
 
-        # Init Ball
-        InitBallCommand(self.play_game_mode.game_state).run()
 
     def on_quit(self):
         self.running = False
