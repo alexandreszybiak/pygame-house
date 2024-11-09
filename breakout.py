@@ -94,6 +94,7 @@ class Grid:
 
 class GameState:
     def __init__(self):
+        self.level_index = 0
         self.area = Rect(0, 0, 160, 240)
         self.paddle: Paddle = Paddle(self, Vector2(0, 200))
         self.paddle.rect.centerx = self.area.centerx
@@ -360,9 +361,14 @@ class RunCollisionsCommand(Command):
         self.state: GameState = state
 
     def run(self):
+        has_collisions = False
+        if self.state.collisions:
+            has_collisions = True
         for c in self.state.collisions:
             c.process()
         self.state.collisions.clear()
+        if has_collisions:
+            self.state.brick_grids = [g for g in self.state.brick_grids if 1 in g.cells]
 
 
 class EditBrickGrid(Command):
@@ -391,35 +397,67 @@ class CreateBrickGrid(Command):
         new_grid.cells = [1 for i in range(w * h)]
         self.state.brick_grids.append(new_grid)
 
+class RemoveEmptyBrickGridsCommand(Command):
+    def __init__(self, state: GameState):
+        self.state = state
 
-class LoadLevel(Command):
+    def run(self):
+        self.state.brick_grids = [g for g in self.state.brick_grids if 1 in g.cells]
+
+
+class ChangeLevelIndex(Command):
+    def __init__(self, state: GameState, increment: int):
+        self.state = state
+        self.increment = increment
+
+    def run(self):
+        self.state.level_index += self.increment
+
+
+class UnloadLevelCommand(Command):
+    def __init__(self, state: GameState):
+        self.state = state
+
+    def run(self):
+        self.state.brick_grids.clear()
+
+
+class LoadLevelCommand(Command):
     def __init__(self, state):
         self.state: GameState = state
 
     def run(self):
-        with (open("level.json", mode="r", encoding="utf-8") as read_file):
-            data = json.load(read_file)
-            for grid_data in data:
-                x = grid_data["x"]
-                y = grid_data["y"]
-                w = grid_data["width"]
-                env = grid_data["env"]
+        level_name: str = "level_" + str(self.state.level_index).zfill(2) + ".json"
+        try:
+            file = open(level_name, mode="r", encoding="utf-8")
+            level = json.load(file)
+            for brick_grid in level:
+                x = brick_grid["x"]
+                y = brick_grid["y"]
+                w = brick_grid["width"]
+                env = brick_grid["env"]
                 new_grid: BrickGrid = BrickGrid(x, y, w, self.state.brick_width, self.state.brick_height, env)
-                new_grid.fill_with_data(grid_data["cells"])
+                new_grid.fill_with_data(brick_grid["cells"])
                 self.state.brick_grids.append(new_grid)
+        except OSError as error:
+            print("OS error:", error)
 
 
-class SaveLevel(Command):
+class SaveLevelCommand(Command):
     def __init__(self, state):
         self.state: GameState = state
 
     def run(self):
+        level_name: str = "level_" + str(self.state.level_index).zfill(2) + ".json"
         level = []
         for g in self.state.brick_grids:
             level.append({"x": g.x, "y": g.y, "width": g.width, "env": g.environment, "cells": g.cells})
 
-        with open("level.json", mode="w", encoding="utf-8") as write_file:
-            json.dump(level, write_file)
+        try:
+            write_file = open(level_name, mode="w", encoding="utf-8")
+            json.dump(level, write_file, indent=4)
+        except OSError as error:
+            print("OS error:", error)
 
 
 ###############################################################################
@@ -553,7 +591,7 @@ class PlayGameMode(GameMode, GameStateObserver):
         # Move balls
         self.commands.append(MoveBallsCommand(self.game_state))
 
-        # Run Collisions
+        # Check for collisions
         self.commands.append(RunCollisionsCommand(self.game_state))
 
         # Apply gravity
@@ -598,12 +636,20 @@ class EditorMode(GameMode):
                 if event.key == pygame.K_ESCAPE:
                     self.observer.on_quit()
                     break
+                elif event.key == pygame.K_LEFT:
+                    self.commands.append(ChangeLevelIndex(self.game_state, -1))
+                    self.commands.append(UnloadLevelCommand(self.game_state))
+                    self.commands.append(LoadLevelCommand(self.game_state))
+                elif event.key == pygame.K_RIGHT:
+                    self.commands.append(ChangeLevelIndex(self.game_state, 1))
+                    self.commands.append(UnloadLevelCommand(self.game_state))
+                    self.commands.append(LoadLevelCommand(self.game_state))
                 elif event.key == pygame.K_p:
                     self.observer.on_play()
                     break
                 elif event.key == pygame.K_s:
                     if event.mod & pygame.KMOD_CTRL:
-                        self.commands.append(SaveLevel(self.game_state))
+                        self.commands.append(SaveLevelCommand(self.game_state))
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 self.is_selecting = True
                 self.selection_origin = Vector2(pygame.mouse.get_pos()[0], pygame.mouse.get_pos()[1])
@@ -646,7 +692,7 @@ class UserInterface:
         # Modes
         self.play_game_mode = PlayGameMode(self)
         self.editor_game_mode = EditorMode(self, self.play_game_mode.game_state)
-        LoadLevel(self.play_game_mode.game_state).run()
+        LoadLevelCommand(self.play_game_mode.game_state).run()
 
         # Window
         self.window = pygame.display.set_mode(self.play_game_mode.viewport.get_rect().scale_by(3, 3).size)
@@ -658,7 +704,6 @@ class UserInterface:
 
         # Start Mode
         self.paused = False
-
 
     def on_quit(self):
         self.running = False
