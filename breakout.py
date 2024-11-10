@@ -99,7 +99,6 @@ class GameState:
         self.paddle: Paddle = Paddle(self, Vector2(0, 200))
         self.paddle.rect.centerx = self.area.centerx
         self.balls: list[Ball] = []
-        self.brick_grid = None
         self.brick_grids: list[BrickGrid] = []
         self.collisions: list[Collision] = []
         self.brick_width = 16
@@ -149,36 +148,40 @@ class BrickGrid(Grid):
 
 
 class Collision:
-    def __init__(self, collider: Entity, axis: Vector2):
+    def __init__(self, state: GameState, collider: Entity, axis: Vector2):
+        self.state = state
         self.collider = collider
         self.axis = axis
 
     def process(self):
-        pass
+        raise NotImplementedError()
 
 
 class GridCollision(Collision):
-    def __init__(self, collider: Entity, axis: Vector2, brick_grid: BrickGrid, hit_cells):
-        super().__init__(collider, axis)
+    def __init__(self, state: GameState, collider: Entity, axis: Vector2, brick_grid: BrickGrid, hit_cells):
+        super().__init__(state, collider, axis)
         self.brick_grid = brick_grid
         self.hit_cells = hit_cells
 
     def process(self):
         for c in self.hit_cells:
             self.brick_grid.set_cell(0, c[0], c[1])
+        if not 1 in self.brick_grid.cells:
+            self.state.brick_grids.remove(self.brick_grid)
+
 
 
 class BallCollision(Collision):
-    def __init__(self, collider: Entity, axis: Vector2):
-        super().__init__(collider, axis)
+    def __init__(self, state: GameState, collider: Entity, axis: Vector2):
+        super().__init__(state, collider, axis)
 
     def process(self):
         self.collider.velocity.reflect_ip(self.axis)
 
 
 class BallCollisionWithPaddle(Collision):
-    def __init__(self, collider: Entity, axis: Vector2, paddle: Paddle):
-        super().__init__(collider, axis)
+    def __init__(self, state: GameState, collider: Entity, axis: Vector2, paddle: Paddle):
+        super().__init__(state, collider, axis)
         self.paddle = paddle
 
     def process(self):
@@ -264,35 +267,35 @@ class MoveBallsCommand(Command):
 
     def collide_x(self, ball: Ball, x_direction):
         axis = Vector2(1, 0)
-        collide = False
-        ball_rect = ball.rect.move(x_direction, 0)
+        next_rect = ball.rect.move(x_direction, 0)
 
         # Paddle
-        if self.state.paddle is not None and ball_rect.colliderect(self.state.paddle):
-            collide = True
+        if self.state.paddle is not None and next_rect.colliderect(self.state.paddle):
+            self.state.collisions.append(BallCollision(self.state, ball, axis))
+            return True
 
         # Area Boundaries
-        if ball_rect.right > self.state.area.right:
-            collide = True
-        elif ball_rect.left < self.state.area.left:
-            collide = True
+        if not self.state.area.contains(next_rect):
+            self.state.collisions.append(BallCollision(self.state, ball, axis))
+            return True
 
         # Grids
-        x = ball_rect.left if x_direction < 0 else ball_rect.right
+        collide = False
+        x = next_rect.left if x_direction < 0 else next_rect.right
         grids: list[tuple[BrickGrid, tuple[int, int]]] = []
         for g in self.state.brick_grids:
-            cell_1 = g.get_cell_coordinates(x, ball_rect.top)
-            cell_2 = g.get_cell_coordinates(x, ball_rect.bottom)
+            cell_1 = g.get_cell_coordinates(x, next_rect.top)
+            cell_2 = g.get_cell_coordinates(x, next_rect.bottom)
             cells = g.get_region_coordinate_and_value(cell_1[0], cell_1[1], cell_2[0], cell_2[1])
 
             hit_cells = [c for c in cells if c[2]]
 
             if hit_cells:
-                self.state.collisions.append(GridCollision(ball, axis, g, hit_cells))
+                self.state.collisions.append(GridCollision(self.state, ball, axis, g, hit_cells))
                 collide = True
 
         if collide:
-            self.state.collisions.append(BallCollision(ball, axis))
+            self.state.collisions.append(BallCollision(self.state, ball, axis))
 
         return collide
 
@@ -303,12 +306,12 @@ class MoveBallsCommand(Command):
 
         # Paddle
         if self.state.paddle is not None and ball_rect.colliderect(self.state.paddle):
-            self.state.collisions.append(BallCollisionWithPaddle(ball, axis, self.state.paddle))
+            self.state.collisions.append(BallCollisionWithPaddle(self.state, ball, axis, self.state.paddle))
             return True
 
         # Area Boundaries
         if ball_rect.top < self.state.area.top:
-            self.state.collisions.append(BallCollision(ball, axis))
+            self.state.collisions.append(BallCollision(self.state, ball, axis))
             return True
 
         # Grids
@@ -321,11 +324,11 @@ class MoveBallsCommand(Command):
             hit_cells = [c for c in cells if c[2]]
 
             if hit_cells:
-                self.state.collisions.append(GridCollision(ball, axis, g, hit_cells))
+                self.state.collisions.append(GridCollision(self.state, ball, axis, g, hit_cells))
                 collide = True
 
         if collide:
-            self.state.collisions.append(BallCollision(ball, axis))
+            self.state.collisions.append(BallCollision(self.state, ball, axis))
 
         return collide
 
@@ -361,14 +364,9 @@ class RunCollisionsCommand(Command):
         self.state: GameState = state
 
     def run(self):
-        has_collisions = False
-        if self.state.collisions:
-            has_collisions = True
         for c in self.state.collisions:
             c.process()
         self.state.collisions.clear()
-        if has_collisions:
-            self.state.brick_grids = [g for g in self.state.brick_grids if 1 in g.cells]
 
 
 class EditBrickGrid(Command):
@@ -378,7 +376,7 @@ class EditBrickGrid(Command):
         self.rect: Rect = rect
 
     def run(self):
-        self.state.brick_grid.set_region_world(self.value, self.rect)
+        pass
 
 
 class CreateBrickGrid(Command):
@@ -396,6 +394,7 @@ class CreateBrickGrid(Command):
                              self.state.brick_height, 1)
         new_grid.cells = [1 for i in range(w * h)]
         self.state.brick_grids.append(new_grid)
+
 
 class RemoveEmptyBrickGridsCommand(Command):
     def __init__(self, state: GameState):
