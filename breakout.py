@@ -15,12 +15,41 @@ os.environ['SDL_VIDEO_CENTERED'] = '1'
 #                                 Engine                                      #
 ###############################################################################
 
+class BrickEffect:
+    def activate(self):
+        pass
+
+
+class Cell:
+    def __init__(self):
+        pass
+
+    def __int__(self):
+        return 1
+
+
+class EmptyCell(Cell):
+    def __init__(self):
+        super().__init__()
+
+    def __int__(self):
+        return 0
+
+
+class Brick(Cell):
+    def __init__(self, effect: BrickEffect):
+        super().__init__()
+        self.effect = effect
+
+
 class Grid:
+    empty_cell: Cell = EmptyCell()
+
     def __init__(self, x, y, width, cell_width, cell_height):
         self.x = x
         self.y = y
         self.width: int = width
-        self.cells = []
+        self.cells: list[Cell] = []
         self.cell_width: int = cell_width
         self.cell_height: int = cell_height
 
@@ -39,21 +68,21 @@ class Grid:
         y = (world_y - self.y) // self.cell_height
         return x, y
 
-    def get_cell(self, x, y):
+    def get_cell(self, x, y) -> Cell:
         if x >= self.width or x < 0:
-            return 0
+            return Grid.empty_cell
         if y >= self.height or y < 0:
-            return 0
+            return Grid.empty_cell
         index: int = x + y * self.width
-        value: int = self.cells[index]
-        return value
+        cell: Cell = self.cells[index]
+        return cell
 
-    def set_cell(self, value, x: int, y: int):
+    def set_cell(self, cell: Cell, x: int, y: int):
         if x < 0 or x >= self.width: return
         if y < 0 or y >= self.height: return
         index = x + y * self.width
         if 0 <= index < len(self.cells):
-            self.cells[index] = value
+            self.cells[index] = cell
 
     def get_cell_world(self, pos: Vector2):
         return self.get_cell(int(pos.x // self.cell_width), int(pos.y // self.cell_height))
@@ -68,8 +97,8 @@ class Grid:
                 cells.append(self.get_cell(x, y))
         return cells
 
-    def get_region_coordinate_and_value(self, x1, y1, x2, y2) -> list[tuple[int, int, int]]:
-        cells: list[tuple[int, int, int]] = []
+    def get_region_coordinate_and_value(self, x1, y1, x2, y2) -> list[tuple[int, int, Cell]]:
+        cells: list[tuple[int, int, Cell]] = []
         for x in range(x1, x2 + 1):
             for y in range(y1, y2 + 1):
                 cells.append((x, y, self.get_cell(x, y)))
@@ -104,6 +133,9 @@ class GameState:
         self.brick_width = 16
         self.brick_height = 8
         self.observers: list[GameStateObserver] = []
+
+        # Ball Effect Models
+        self.ball_spawner_tile_effect: BrickEffect = BallSpawnerTileEffect(self.balls, 3)
 
     def add_observer(self, observer):
         self.observers.append(observer)
@@ -147,6 +179,15 @@ class BrickGrid(Grid):
         self.environment = environment
 
 
+class BallSpawnerTileEffect(BrickEffect):
+    def __init__(self, balls: list[Ball], amount: int):
+        self.balls = balls
+        self.amount = amount
+
+    def activate(self):
+        print("Ball Spawn!")
+
+
 class Collision:
     def __init__(self, state: GameState, collider: Entity, axis: Vector2):
         self.state = state
@@ -165,10 +206,13 @@ class GridCollision(Collision):
 
     def process(self):
         for c in self.hit_cells:
-            self.brick_grid.set_cell(0, c[0], c[1])
-        if not 1 in self.brick_grid.cells:
-            self.state.brick_grids.remove(self.brick_grid)
+            brick: Brick = c[2]
+            brick.effect.activate()
+            self.brick_grid.set_cell(Grid.empty_cell, c[0], c[1])
 
+        # Check if there's some cells left that are not empty
+        if not [cell for cell in self.brick_grid.cells if cell is not Grid.empty_cell]:
+            self.state.brick_grids.remove(self.brick_grid)
 
 
 class BallCollision(Collision):
@@ -288,7 +332,7 @@ class MoveBallsCommand(Command):
             cell_2 = g.get_cell_coordinates(x, next_rect.bottom)
             cells = g.get_region_coordinate_and_value(cell_1[0], cell_1[1], cell_2[0], cell_2[1])
 
-            hit_cells = [c for c in cells if c[2]]
+            hit_cells = [c for c in cells if c[2] is not Grid.empty_cell]
 
             if hit_cells:
                 self.state.collisions.append(GridCollision(self.state, ball, axis, g, hit_cells))
@@ -321,7 +365,7 @@ class MoveBallsCommand(Command):
             cell_2 = g.get_cell_coordinates(ball_rect.right, y)
             cells = g.get_region_coordinate_and_value(cell_1[0], cell_1[1], cell_2[0], cell_2[1])
 
-            hit_cells = [c for c in cells if c[2]]
+            hit_cells = [c for c in cells if c[2] is not Grid.empty_cell]
 
             if hit_cells:
                 self.state.collisions.append(GridCollision(self.state, ball, axis, g, hit_cells))
@@ -436,7 +480,8 @@ class LoadLevelCommand(Command):
                 w = brick_grid["width"]
                 env = brick_grid["env"]
                 new_grid: BrickGrid = BrickGrid(x, y, w, self.state.brick_width, self.state.brick_height, env)
-                new_grid.fill_with_data(brick_grid["cells"])
+                for count, value in enumerate(brick_grid["cells"]):
+                    new_grid.cells.append(Brick(self.state.ball_spawner_tile_effect))
                 self.state.brick_grids.append(new_grid)
         except OSError as error:
             print("OS error:", error)
@@ -511,10 +556,10 @@ class TileLayer(RenderingLayer):
                     draw_w = g.cell_width
                     draw_h = g.cell_height
 
-                    value = g.get_cell(x, y)
-                    value += g.get_cell(x + 1, y) * 2
-                    value += g.get_cell(x, y + 1) * 4
-                    value += g.get_cell(x + 1, y + 1) * 8
+                    value = int(g.get_cell(x, y))
+                    value += int(g.get_cell(x + 1, y)) * 2
+                    value += int(g.get_cell(x, y + 1)) * 4
+                    value += int(g.get_cell(x + 1, y + 1)) * 8
 
                     dest = Rect(draw_x, draw_y, draw_w, draw_h)
                     area = Rect(value * g.cell_width, 0, g.cell_width, g.cell_height)
