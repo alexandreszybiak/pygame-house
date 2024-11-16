@@ -28,6 +28,9 @@ class Cell:
     def __int__(self):
         return 1
 
+    def __bool__(self):
+        return True
+
 
 class EmptyCell(Cell):
     def __init__(self):
@@ -35,6 +38,9 @@ class EmptyCell(Cell):
 
     def __int__(self):
         return 0
+
+    def __bool__(self):
+        return False
 
 
 class Brick(Cell):
@@ -64,6 +70,9 @@ class Grid:
     def height(self):
         return len(self.cells) // self.width
 
+    def get_rect(self) -> Rect:
+        return Rect(self.x, self.y, self.width * self.cell_width, self.height * self.cell_height)
+
     def get_cell_coordinates(self, world_x, world_y):
         x = (world_x - self.x) // self.cell_width
         y = (world_y - self.y) // self.cell_height
@@ -86,7 +95,9 @@ class Grid:
             self.cells[index] = cell
 
     def get_cell_world(self, pos: Vector2):
-        return self.get_cell(int(pos.x // self.cell_width), int(pos.y // self.cell_height))
+        x = pos.x - self.x
+        y = pos.y - self.y
+        return self.get_cell(int(x // self.cell_width), int(y // self.cell_height))
 
     def set_cell_world(self, value, pos: Vector2):
         self.set_cell(value, int(pos.x // self.cell_width), int(pos.y // self.cell_height))
@@ -178,6 +189,9 @@ class BrickGrid(Grid):
     def __init__(self, x, y, width, cell_width, cell_height, environment):
         super().__init__(x, y, width, cell_width, cell_height)
         self.environment = environment
+
+    def collide_point(self, point: Vector2) -> bool:
+        return bool(self.get_cell_world(point))
 
 
 class BallSpawnerTileEffect(BrickEffect):
@@ -508,6 +522,35 @@ class SaveLevelCommand(Command):
 ###############################################################################
 #                                Rendering                                    #
 ###############################################################################
+class Viewport:
+    def __init__(self, size, scale):
+        self.surface: Surface = Surface(size)
+        self.scale: int = scale
+
+    def clear(self):
+        self.surface.fill((0, 0, 0))
+
+    @property
+    def display_size(self) -> tuple[int, int]:
+        rect = self.surface.get_rect()
+        return rect.width * self.scale, rect.height * self.scale
+
+    @property
+    def mouse_x(self) -> int:
+        return pygame.mouse.get_pos()[0] // self.scale
+
+    @property
+    def mouse_y(self) -> int:
+        return pygame.mouse.get_pos()[1] // self.scale
+
+    @property
+    def mouse(self) -> Vector2:
+        return Vector2(self.mouse_x, self.mouse_y)
+
+    def render(self, window: Surface):
+        window.blit(pygame.transform.scale_by(self.surface, self.scale), window.get_rect())
+
+
 class GameStateObserver:
     def on_ball_created(self, ball):
         pass
@@ -517,7 +560,7 @@ class GameStateObserver:
 
 
 class RenderingLayer(GameStateObserver):
-    def render(self, surface):
+    def render(self, viewport: Viewport):
         raise NotImplementedError()
 
 
@@ -528,10 +571,10 @@ class EntityLayer(RenderingLayer):
     def on_ball_created(self, ball):
         self.entities.append(ball)
 
-    def render(self, surface):
+    def render(self, viewport: Viewport):
         # Render entities
         for e in self.entities:
-            pygame.draw.rect(surface, 'white', e.rect)
+            pygame.draw.rect(viewport.surface, 'white', e.rect)
 
 
 class TileLayer(RenderingLayer):
@@ -544,11 +587,11 @@ class TileLayer(RenderingLayer):
             i.set_colorkey((0, 0, 0))
             self.tile_sets.append(i)
 
-    def render(self, surface):
-        self.render_auto_tile(surface)
+    def render(self, viewport: Viewport):
+        self.render_auto_tile(viewport)
         return
 
-    def render_auto_tile(self, surface: Surface):
+    def render_auto_tile(self, viewport: Viewport):
         for g in self.grids:
             for x in range(-1, g.width):
                 for y in range(-1, g.height):
@@ -565,7 +608,7 @@ class TileLayer(RenderingLayer):
                     dest = Rect(draw_x, draw_y, draw_w, draw_h)
                     area = Rect(value * g.cell_width, 0, g.cell_width, g.cell_height)
 
-                    surface.blit(self.tile_sets[g.environment], dest, area)
+                    viewport.surface.blit(self.tile_sets[g.environment], dest, area)
 
 
 ###############################################################################
@@ -599,7 +642,7 @@ class PlayGameMode(GameMode, GameStateObserver):
         tile_layer = TileLayer(self.game_state.brick_grids)
 
         self.rendering_layers = [tile_layer, entity_layer]
-        self.viewport = Surface(self.game_state.area.size)
+        self.viewport: Viewport = Viewport(self.game_state.area.size, 3)
 
         # Controls
         self.paddle = self.game_state.paddle
@@ -647,7 +690,7 @@ class PlayGameMode(GameMode, GameStateObserver):
         self.commands.clear()
 
     def render(self, window):
-        self.viewport.fill((0, 0, 0))
+        self.viewport.clear()
 
         for l in self.rendering_layers:
             l.render(self.viewport)
@@ -657,15 +700,21 @@ class PlayGameMode(GameMode, GameStateObserver):
 
 
 class EditorMode(GameMode):
-    def __init__(self, observer, game_state):
+    def __init__(self, observer, game_state, play_game_mode: PlayGameMode):
         # Observer
         self.observer: UserInterface = observer
 
         # Game state
-        self.game_state = game_state
+        self.game_state: GameState = game_state
+
+        # Reference to the main game mode
+        self.play_game_mode: PlayGameMode = play_game_mode
 
         # Controls
         self.commands: list[Command] = []
+
+        #
+        self.hovered_brick_grid: list[BrickGrid] = []
 
         # Graphical User Interface
         self.selection_rect = Rect(0, 0, 0, 0)
@@ -708,6 +757,12 @@ class EditorMode(GameMode):
                 self.commands.append(CreateBrickGrid(self.game_state, new_rect))
                 self.selection_rect.update(0, 0, 0, 0)
                 self.is_selecting = False
+            elif event.type == pygame.MOUSEMOTION:
+                self.hovered_brick_grid.clear()
+                for bg in self.game_state.brick_grids:
+                    if bg.collide_point(self.play_game_mode.viewport.mouse):
+                        self.hovered_brick_grid.append(bg)
+                        break
 
         # Selection Rectangle
         if self.is_selecting:
@@ -732,15 +787,15 @@ class UserInterface:
         pygame.init()
 
         # Rendering properties
-        self.pixel_size = 3
+        pixel_size = 3
 
         # Modes
         self.play_game_mode = PlayGameMode(self)
-        self.editor_game_mode = EditorMode(self, self.play_game_mode.game_state)
+        self.editor_mode = EditorMode(self, self.play_game_mode.game_state, self.play_game_mode)
         LoadLevelCommand(self.play_game_mode.game_state).run()
 
         # Window
-        self.window = pygame.display.set_mode(self.play_game_mode.viewport.get_rect().scale_by(3, 3).size)
+        self.window = pygame.display.set_mode(self.play_game_mode.viewport.display_size)
         pygame.display.set_caption("Alexandre Szybiak - Breakout")
 
         # GUI Surface
@@ -765,8 +820,8 @@ class UserInterface:
     def run(self):
         while self.running:
             if self.paused:
-                self.editor_game_mode.process_input()
-                self.editor_game_mode.update()
+                self.editor_mode.process_input()
+                self.editor_mode.update()
             else:
                 self.play_game_mode.process_input()
                 self.play_game_mode.update()
@@ -774,29 +829,41 @@ class UserInterface:
             self.play_game_mode.render(self.window)
 
             # Reset window
-            self.window.fill((0,0,0))
+            self.window.fill((0, 0, 0))
 
-            # Draw Viewport
-            self.window.blit(pygame.transform.scale_by(self.play_game_mode.viewport, self.pixel_size),
-                             self.window.get_rect())
+            # Draw Game Viewport
+            self.play_game_mode.viewport.render(self.window)
 
-            # Draw Graphical User Interface
+            # Draw Editor Graphical User Interface
             if self.paused:
-                self.gui_surface.fill((0,0,0,0))
+                self.gui_surface.fill((0, 0, 0, 0))
+
+                # Grid
                 col_count = self.play_game_mode.game_state.area.width // self.play_game_mode.game_state.brick_width
                 line_count = self.play_game_mode.game_state.area.height // self.play_game_mode.game_state.brick_height
                 col_gap = self.window.get_rect().width / col_count
                 line_gap = self.window.get_rect().height / line_count
-                col = Color(0,255,0, 64)
+                col = Color(0, 255, 0, 64)
                 for x in range(col_count):
                     pygame.draw.line(self.gui_surface, col, (x * col_gap, 0),
                                      (x * col_gap, self.window.get_rect().height))
                 for y in range(line_count):
                     pygame.draw.line(self.gui_surface, col, (0, y * line_gap),
                                      (self.window.get_rect().width, y * line_gap))
-                    pygame.draw.rect(self.gui_surface, "green", self.editor_game_mode.selection_rect, 1)
+                # Selection Rectangle
+                pygame.draw.rect(self.gui_surface, "green", self.editor_mode.selection_rect, 1)
 
-                self.window.blit(self.gui_surface, (0,0))
+                # Hovered Brick Grid
+                for bg in self.editor_mode.hovered_brick_grid:
+                    rect = bg.get_rect()
+                    rect.x *= 3
+                    rect.y *= 3
+                    rect.w *= 3
+                    rect.h *= 3
+                    pygame.draw.rect(self.gui_surface, "green", rect, 2)
+
+                self.window.blit(self.gui_surface, (0, 0))
+
 
             pygame.display.update()
             self.clock.tick(60)
