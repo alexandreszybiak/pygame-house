@@ -186,6 +186,8 @@ class Paddle(Entity):
 
 
 class BrickGrid(Grid):
+    environment_count = 2
+
     def __init__(self, x, y, width, cell_width, cell_height, environment):
         super().__init__(x, y, width, cell_width, cell_height)
         self.environment = environment
@@ -510,13 +512,25 @@ class SaveLevelCommand(Command):
         level_name: str = "level_" + str(self.state.level_index).zfill(2) + ".json"
         level = []
         for g in self.state.brick_grids:
-            level.append({"x": g.x, "y": g.y, "width": g.width, "env": g.environment, "cells": g.cells})
+            # Convert Cell into int
+            cells: list[int] = [int(c) for c in g.cells]
+            level.append({"x": g.x, "y": g.y, "width": g.width, "env": g.environment, "cells": cells})
 
         try:
             write_file = open(level_name, mode="w", encoding="utf-8")
             json.dump(level, write_file, indent=4)
         except OSError as error:
             print("OS error:", error)
+
+
+class ChangeBrickGridEnvironmentCommand(Command):
+    def __init__(self, brick_grid: list[BrickGrid], increment: int):
+        self.brickGrid: list[BrickGrid] = brick_grid
+        self.increment = increment
+
+    def run(self):
+        for bg in self.brickGrid:
+            bg.environment = abs(bg.environment + self.increment) % bg.environment_count
 
 
 ###############################################################################
@@ -738,6 +752,10 @@ class EditorMode(GameMode):
                     self.commands.append(ChangeLevelIndex(self.game_state, 1))
                     self.commands.append(UnloadLevelCommand(self.game_state))
                     self.commands.append(LoadLevelCommand(self.game_state))
+                elif event.key == pygame.K_UP:
+                    self.commands.append(ChangeBrickGridEnvironmentCommand(self.hovered_brick_grid, 1))
+                elif event.key == pygame.K_DOWN:
+                    self.commands.append(ChangeBrickGridEnvironmentCommand(self.hovered_brick_grid, -1))
                 elif event.key == pygame.K_p:
                     self.observer.on_play()
                     break
@@ -863,7 +881,6 @@ class UserInterface:
                     pygame.draw.rect(self.gui_surface, "green", rect, 2)
 
                 self.window.blit(self.gui_surface, (0, 0))
-
 
             pygame.display.update()
             self.clock.tick(60)
