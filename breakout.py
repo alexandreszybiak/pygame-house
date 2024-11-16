@@ -4,7 +4,8 @@ from math import copysign, floor, ceil
 from turtledemo.penrose import start
 
 import pygame
-from pygame import Rect
+from pygame import Rect, Color
+from pygame.draw import lines
 from pygame.math import Vector2
 from pygame.surface import Surface
 
@@ -742,6 +743,9 @@ class UserInterface:
         self.window = pygame.display.set_mode(self.play_game_mode.viewport.get_rect().scale_by(3, 3).size)
         pygame.display.set_caption("Alexandre Szybiak - Breakout")
 
+        # GUI Surface
+        self.gui_surface = Surface((self.window.get_width(), self.window.get_height()), pygame.SRCALPHA)
+
         # Loop properties
         self.clock = pygame.time.Clock()
         self.running = True
@@ -769,12 +773,31 @@ class UserInterface:
 
             self.play_game_mode.render(self.window)
 
+            # Reset window
+            self.window.fill((0,0,0))
+
             # Draw Viewport
             self.window.blit(pygame.transform.scale_by(self.play_game_mode.viewport, self.pixel_size),
                              self.window.get_rect())
 
             # Draw Graphical User Interface
-            pygame.draw.rect(self.window, "green", self.editor_game_mode.selection_rect, 1)
+            if self.paused:
+                self.gui_surface.fill((0,0,0,0))
+                col_count = self.play_game_mode.game_state.area.width // self.play_game_mode.game_state.brick_width
+                line_count = self.play_game_mode.game_state.area.height // self.play_game_mode.game_state.brick_height
+                col_gap = self.window.get_rect().width / col_count
+                line_gap = self.window.get_rect().height / line_count
+                col = Color(0,255,0, 64)
+                for x in range(col_count):
+                    pygame.draw.line(self.gui_surface, col, (x * col_gap, 0),
+                                     (x * col_gap, self.window.get_rect().height))
+                for y in range(line_count):
+                    pygame.draw.line(self.gui_surface, col, (0, y * line_gap),
+                                     (self.window.get_rect().width, y * line_gap))
+                    pygame.draw.rect(self.gui_surface, "green", self.editor_game_mode.selection_rect, 1)
+
+                self.window.blit(self.gui_surface, (0,0))
+
             pygame.display.update()
             self.clock.tick(60)
 
