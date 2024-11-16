@@ -51,6 +51,7 @@ class Brick(Cell):
 
 class Grid:
     empty_cell: Cell = EmptyCell()
+    cell: Cell = Cell()
 
     def __init__(self, x, y, width, cell_width, cell_height):
         self.x = x
@@ -453,7 +454,7 @@ class CreateBrickGrid(Command):
 
         new_grid = BrickGrid(x * self.state.brick_width, y * self.state.brick_height, w, self.state.brick_width,
                              self.state.brick_height, 1)
-        new_grid.cells = [1 for i in range(w * h)]
+        new_grid.cells = [Grid.cell for i in range(w * h)]
         self.state.brick_grids.append(new_grid)
 
 
