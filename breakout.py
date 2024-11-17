@@ -187,7 +187,7 @@ class Paddle(Entity):
 
 
 class BrickGrid(Grid):
-    environment_count = 2
+    environment_count = 3
 
     def __init__(self, x, y, width, cell_width, cell_height, environment):
         super().__init__(x, y, width, cell_width, cell_height)
@@ -543,7 +543,7 @@ class Viewport:
         self.scale: int = scale
 
     def clear(self):
-        self.surface.fill((0, 0, 0))
+        self.surface.fill(0x326441)
 
     @property
     def display_size(self) -> tuple[int, int]:
@@ -595,7 +595,7 @@ class EntityLayer(RenderingLayer):
 class TileLayer(RenderingLayer):
     def __init__(self, grids):
         self.grids: list[BrickGrid] = grids
-        files = ["tiles_dual_16_8_garden.png", "tiles_dual_16_8_bathroom.png"]
+        files = ["tiles_dual_16_8_forest.png"]
         self.tile_sets = []
         for f in files:
             i = pygame.image.load(f)
@@ -620,10 +620,15 @@ class TileLayer(RenderingLayer):
                     value += int(g.get_cell(x, y + 1)) * 4
                     value += int(g.get_cell(x + 1, y + 1)) * 8
 
-                    dest = Rect(draw_x, draw_y, draw_w, draw_h)
-                    area = Rect(value * g.cell_width, 0, g.cell_width, g.cell_height)
+                    if value == 0:
+                        continue
 
-                    viewport.surface.blit(self.tile_sets[g.environment], dest, area)
+                    value -= 1
+
+                    dest = Rect(draw_x, draw_y, draw_w, draw_h)
+                    area = Rect(value * g.cell_width, g.environment * g.cell_height, g.cell_width, g.cell_height)
+
+                    viewport.surface.blit(self.tile_sets[0], dest, area)
 
 
 ###############################################################################
