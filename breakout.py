@@ -216,6 +216,7 @@ class Ball(Entity):
 
 
 class Paddle(Entity):
+    speed = 2
     def __init__(self, state, position: Vector2):
         super().__init__(state, position)
         self.move_speed = 2
@@ -328,13 +329,13 @@ class LaunchBallCommand(Command):
 
 
 class PaddleMoveCommand(Command):
-    def __init__(self, state, paddle, move_direction):
+    def __init__(self, state, paddle, move_amount):
         self.state: GameState = state
         self.paddle: Paddle = paddle
-        self.move_direction = move_direction
+        self.move_amount = move_amount
 
     def run(self):
-        self.paddle.rect.move_ip(self.paddle.move_speed * self.move_direction, 0)
+        self.paddle.rect.move_ip(self.move_amount, 0)
         self.paddle.rect.clamp_ip(self.state.area)
         for b in self.state.balls:
             if self.paddle.rect.colliderect(b):
@@ -723,6 +724,7 @@ class PlayGameMode(GameMode, GameStateObserver):
 
     def process_input(self):
         pressed_launch = False
+        move_amount = 0
 
         # Pygame events (close & keyboard)
         for event in pygame.event.get():
@@ -730,6 +732,7 @@ class PlayGameMode(GameMode, GameStateObserver):
                 self.observer.on_quit()
                 break
             elif event.type == pygame.KEYDOWN:
+                pygame.event.set_grab(False)
                 if event.key == pygame.K_ESCAPE:
                     self.observer.on_quit()
                     break
@@ -742,8 +745,17 @@ class PlayGameMode(GameMode, GameStateObserver):
                 if event.key == pygame.K_DOWN:
                     self.commands.append(ClearBallsCommand(self.game_state))
                     break
+            elif event.type == pygame.MOUSEMOTION:
+                pygame.event.set_grab(True)
+            elif event.type == pygame.MOUSEBUTTONUP:
+                pressed_launch = True
+
         keys = pygame.key.get_pressed()
-        move_direction = -keys[pygame.K_LEFT] + keys[pygame.K_RIGHT]
+
+        if not pygame.event.get_grab():
+            move_amount = ( -keys[pygame.K_LEFT] + keys[pygame.K_RIGHT] ) * Paddle.speed
+        else:
+            move_amount = pygame.mouse.get_rel()[0] / 3
 
         if self.level_clear:
             self.level_clear = False
@@ -758,8 +770,8 @@ class PlayGameMode(GameMode, GameStateObserver):
             InitBallCommand(self.game_state).run()
 
         # Keyboard controls the moves of the player's unit
-        if move_direction != 0:
-            command = PaddleMoveCommand(self.game_state, self.paddle, move_direction)
+        if move_amount != 0:
+            command = PaddleMoveCommand(self.game_state, self.paddle, move_amount)
             self.commands.append(command)
 
         # Launch Ball
