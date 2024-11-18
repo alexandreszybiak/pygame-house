@@ -133,6 +133,22 @@ class Grid:
 ###############################################################################
 #                               Game State                                    #
 ###############################################################################
+class GameStateObserver:
+    def on_ball_created(self, ball):
+        pass
+
+    def on_ball_lost(self, ball):
+        pass
+
+    def on_balls_cleared(self):
+        pass
+
+    def on_last_ball_lost(self):
+        pass
+
+    def on_last_brick_destroyed(self):
+        pass
+
 
 class GameState:
     def __init__(self):
@@ -150,16 +166,32 @@ class GameState:
         # Ball Effect Models
         self.ball_spawner_tile_effect: BrickEffect = BallSpawnerTileEffect(self.balls, 3)
 
-    def add_observer(self, observer):
+    def add_observer(self, observer: GameStateObserver):
         self.observers.append(observer)
 
     def notify_ball_created(self, ball):
+        print("Ball Created")
         for observer in self.observers:
             observer.on_ball_created(ball)
+
+    def notify_ball_lost(self, ball):
+        print("Ball Lost")
+        for observer in self.observers:
+            observer.on_ball_lost(ball)
+
+    def notify_balls_cleared(self):
+        print("All Balls Destroyed")
+        for observer in self.observers:
+            observer.on_balls_cleared()
 
     def notify_last_ball_lost(self):
         for observer in self.observers:
             observer.on_last_ball_lost()
+
+    def notify_last_brick_destroyed(self):
+        print("Last Brick Destroyed")
+        for observer in self.observers:
+            observer.on_last_brick_destroyed()
 
 
 class Entity:
@@ -169,6 +201,10 @@ class Entity:
         self.velocity = Vector2(0, 0)
         self.rect: Rect = Rect(0, 0, 1, 1)
         self.movement_remainder = Vector2()
+        self.alive = True
+
+    def set_alive(self, value: bool):
+        self.alive = value
 
 
 class Ball(Entity):
@@ -203,7 +239,7 @@ class BallSpawnerTileEffect(BrickEffect):
         self.amount = amount
 
     def activate(self):
-        print("Ball Spawn!")
+        pass
 
 
 class Collision:
@@ -231,6 +267,10 @@ class GridCollision(Collision):
         # Check if there's some cells left that are not empty
         if not [cell for cell in self.brick_grid.cells if cell is not Grid.empty_cell]:
             self.state.brick_grids.remove(self.brick_grid)
+
+        # If no more brick grids, send a notification
+        if not self.state.brick_grids:
+            self.state.notify_last_brick_destroyed()
 
 
 class BallCollision(Collision):
@@ -325,6 +365,7 @@ class MoveBallsCommand(Command):
             self.move_y(b)
             self.move_x(b)
             if not self.state.area.colliderect(b.rect):
+                self.state.notify_ball_lost(b)
                 self.state.balls.remove(b)
 
     def collide_x(self, ball: Ball, x_direction):
@@ -482,6 +523,16 @@ class UnloadLevelCommand(Command):
     def run(self):
         self.state.brick_grids.clear()
 
+class ClearBallsCommand(Command):
+    def __init__(self, state: GameState):
+        self.state = state
+
+    def run(self):
+        for b in self.state.balls:
+            b.set_alive(False)
+        self.state.balls.clear()
+        self.state.notify_balls_cleared()
+
 
 class LoadLevelCommand(Command):
     def __init__(self, state):
@@ -566,14 +617,6 @@ class Viewport:
         window.blit(pygame.transform.scale_by(self.surface, self.scale), window.get_rect())
 
 
-class GameStateObserver:
-    def on_ball_created(self, ball):
-        pass
-
-    def on_last_ball_lost(self):
-        pass
-
-
 class RenderingLayer(GameStateObserver):
     def render(self, viewport: Viewport):
         raise NotImplementedError()
@@ -581,10 +624,16 @@ class RenderingLayer(GameStateObserver):
 
 class EntityLayer(RenderingLayer):
     def __init__(self):
-        self.entities = []
+        self.entities: list[Entity] = []
 
     def on_ball_created(self, ball):
         self.entities.append(ball)
+
+    def on_ball_lost(self, ball):
+        self.entities.remove(ball)
+
+    def on_balls_cleared(self):
+        self.entities = [e for e in self.entities if e.alive]
 
     def render(self, viewport: Viewport):
         # Render entities
@@ -653,6 +702,7 @@ class PlayGameMode(GameMode, GameStateObserver):
 
         # Game state
         self.game_state = GameState()
+        self.game_state.add_observer(self)
 
         # Layers
         entity_layer = EntityLayer()
@@ -668,7 +718,12 @@ class PlayGameMode(GameMode, GameStateObserver):
         self.paddle = self.game_state.paddle
         self.commands: list[Command] = []
 
+        #
+        self.level_clear = False
+
     def process_input(self):
+        pressed_launch = False
+
         # Pygame events (close & keyboard)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -682,10 +737,21 @@ class PlayGameMode(GameMode, GameStateObserver):
                     self.observer.on_edit()
                     break
                 if event.key == pygame.K_UP:
-                    self.commands.append(LaunchBallCommand(self.game_state))
+                    pressed_launch = True
+                    break
+                if event.key == pygame.K_DOWN:
+                    self.commands.append(ClearBallsCommand(self.game_state))
                     break
         keys = pygame.key.get_pressed()
         move_direction = -keys[pygame.K_LEFT] + keys[pygame.K_RIGHT]
+
+        if self.level_clear:
+            self.level_clear = False
+            self.commands.append(ClearBallsCommand(self.game_state))
+            self.commands.append(ChangeLevelIndex(self.game_state, 1))
+            self.commands.append(UnloadLevelCommand(self.game_state))
+            self.commands.append(LoadLevelCommand(self.game_state))
+            return
 
         # Init Ball
         if not self.game_state.balls:
@@ -695,6 +761,10 @@ class PlayGameMode(GameMode, GameStateObserver):
         if move_direction != 0:
             command = PaddleMoveCommand(self.game_state, self.paddle, move_direction)
             self.commands.append(command)
+
+        # Launch Ball
+        if pressed_launch:
+            self.commands.append(LaunchBallCommand(self.game_state))
 
         # Move balls
         self.commands.append(MoveBallsCommand(self.game_state))
@@ -717,6 +787,9 @@ class PlayGameMode(GameMode, GameStateObserver):
 
     def on_last_ball_lost(self):
         pass
+
+    def on_last_brick_destroyed(self):
+        self.level_clear = True
 
 
 class EditorMode(GameMode):
