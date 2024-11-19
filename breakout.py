@@ -22,25 +22,14 @@ class BrickEffect:
 
 
 class Cell:
-    def __init__(self):
-        pass
+    def __init__(self, alive=True):
+        self.alive = alive
 
     def __int__(self):
-        return 1
+        return int(self.alive)
 
     def __bool__(self):
-        return True
-
-
-class EmptyCell(Cell):
-    def __init__(self):
-        super().__init__()
-
-    def __int__(self):
-        return 0
-
-    def __bool__(self):
-        return False
+        return self.alive
 
 
 class Brick(Cell):
@@ -50,16 +39,20 @@ class Brick(Cell):
 
 
 class Grid:
-    empty_cell: Cell = EmptyCell()
+    error_cell: Cell = Cell(False)
     cell: Cell = Cell()
 
-    def __init__(self, x, y, width, cell_width, cell_height):
+    def __init__(self, x: int, y: int, width: int, cell_width: int, cell_height: int):
         self.x = x
         self.y = y
         self.width: int = width
         self.cells: list[Cell] = []
         self.cell_width: int = cell_width
         self.cell_height: int = cell_height
+        self._dirty = False
+
+    def set_dirty(self):
+        self._dirty = True
 
     def fill(self, value):
         pass
@@ -74,6 +67,7 @@ class Grid:
     def get_rect(self) -> Rect:
         return Rect(self.x, self.y, self.width * self.cell_width, self.height * self.cell_height)
 
+    # Cell-related Methods
     def get_cell_coordinates(self, world_x, world_y):
         x = (world_x - self.x) // self.cell_width
         y = (world_y - self.y) // self.cell_height
@@ -81,58 +75,116 @@ class Grid:
 
     def get_cell(self, x, y) -> Cell:
         if x >= self.width or x < 0:
-            return Grid.empty_cell
+            return Grid.error_cell
         if y >= self.height or y < 0:
-            return Grid.empty_cell
+            return Grid.error_cell
         index: int = x + y * self.width
         cell: Cell = self.cells[index]
         return cell
 
-    def set_cell(self, cell: Cell, x: int, y: int):
+    def kill_cell(self, x: int, y: int):
         if x < 0 or x >= self.width: return
         if y < 0 or y >= self.height: return
         index = x + y * self.width
         if 0 <= index < len(self.cells):
-            self.cells[index] = cell
+            self.cells[index].alive = False
+            self.set_dirty()
 
-    def get_cell_world(self, pos: Vector2):
+    def kill_cell_world(self, pos: Vector2):
+        x = int(pos.x) - self.x
+        y = int(pos.y) - self.y
+        self.kill_cell(x // self.cell_width, y // self.cell_height)
+
+    def is_cell_alive(self, x: int, y: int) -> bool:
+        if x >= self.width or x < 0 or y >= self.height or y < 0:
+            return False
+        return self.cells[x + y * self.width].alive
+
+    def is_cell_alive_world(self, pos: Vector2) -> bool:
         x = pos.x - self.x
         y = pos.y - self.y
-        return self.get_cell(int(x // self.cell_width), int(y // self.cell_height))
+        return self.is_cell_alive(int(x // self.cell_width), int(y // self.cell_height))
 
-    def set_cell_world(self, value, pos: Vector2):
-        self.set_cell(value, int(pos.x // self.cell_width), int(pos.y // self.cell_height))
-
-    def get_region(self, x1, y1, x2, y2):
-        cells = []
-        for x in range(x1, x2 + 1):
-            for y in range(y1, y2 + 1):
-                cells.append(self.get_cell(x, y))
-        return cells
-
-    def get_region_coordinate_and_value(self, x1, y1, x2, y2) -> list[tuple[int, int, Cell]]:
+    # Region
+    def get_region_coordinate_and_cells(self, x1, y1, x2, y2) -> list[tuple[int, int, Cell]]:
         cells: list[tuple[int, int, Cell]] = []
         for x in range(x1, x2 + 1):
             for y in range(y1, y2 + 1):
                 cells.append((x, y, self.get_cell(x, y)))
         return cells
 
-    def set_region(self, value, x1: int, y1: int, x2: int, y2: int):
-        for x in range(x1, x2 + 1):
-            for y in range(y1, y2 + 1):
-                self.set_cell(value, x, y)
+    # Rows and Column
+    def get_row(self, row) -> list[Cell]:
+        return [c for c in self.cells[row * self.width: row * self.width + self.width] if not c.alive]
 
-    def set_region_world(self, value, rect):
-        x1: int = int(rect.left / self.cell_width)
-        y1: int = int(rect.top / self.cell_height)
-        x2: int = int(rect.right / self.cell_width)
-        y2: int = int(rect.bottom / self.cell_height)
-        self.set_region(value, x1, y1, x2, y2)
+    def get_column(self, column) -> list[Cell]:
+        return [c for c in self.cells[column::self.width] if not c.alive]
 
 
 ###############################################################################
 #                               Game State                                    #
 ###############################################################################
+class BrickGrid(Grid):
+    environment_count = 3
+
+    def __init__(self, x, y, width, cell_width, cell_height, environment):
+        super().__init__(x, y, width, cell_width, cell_height)
+        self.environment = environment
+
+    def collide_point(self, point: Vector2) -> bool:
+        return self.is_cell_alive_world(point)
+
+    def trim(self):
+        if not self._dirty:
+            return
+
+        # Trim Grid from Top
+        cells_to_delete = []
+        for i in range(self.height):
+            row = self.get_row(i)
+            if len(row) < self.width:
+                break
+            cells_to_delete.extend(row)
+            self.y += self.cell_height
+        for c in cells_to_delete:
+            self.cells.remove(c)
+
+        # Trim Grid from Bottom
+        cells_to_delete = []
+        for i in reversed(range(self.height)):
+            row = self.get_row(i)
+            if len(row) < self.width:
+                break
+            cells_to_delete.extend(row)
+        for c in cells_to_delete:
+            self.cells.remove(c)
+
+        # Trim Grid from Left
+        cells_to_delete = []
+        for i in range(self.width):
+            col = self.get_column(i)
+            if len(col) < self.height:
+                break
+            cells_to_delete.extend(col)
+            self.x += self.cell_width
+            self.width -= 1
+        for c in cells_to_delete:
+            self.cells.remove(c)
+
+        # Trim Grid from Right
+        cells_to_delete = []
+        for i in reversed(range(self.width)):
+            col = self.get_column(i)
+            if len(col) < self.height:
+                break
+            cells_to_delete.extend(col)
+            self.width -= 1
+        for c in cells_to_delete:
+            self.cells.remove(c)
+
+        self._dirty = False
+
+
 class GameStateObserver:
     def on_ball_created(self, ball):
         pass
@@ -147,6 +199,9 @@ class GameStateObserver:
         pass
 
     def on_last_brick_destroyed(self):
+        pass
+
+    def on_brick_grid_destroyed(self, brick_grid: BrickGrid):
         pass
 
 
@@ -193,6 +248,11 @@ class GameState:
         for observer in self.observers:
             observer.on_last_brick_destroyed()
 
+    def notify_brick_grid_destroyed(self, brick_grid: BrickGrid):
+        print("Brick Destroyed")
+        for observer in self.observers:
+            observer.on_brick_grid_destroyed(brick_grid)
+
 
 class Entity:
     def __init__(self, state: GameState, position):
@@ -217,21 +277,11 @@ class Ball(Entity):
 
 class Paddle(Entity):
     speed = 2
+
     def __init__(self, state, position: Vector2):
         super().__init__(state, position)
         self.move_speed = 2
         self.rect = Rect(position.x, position.y, 40, 4)
-
-
-class BrickGrid(Grid):
-    environment_count = 3
-
-    def __init__(self, x, y, width, cell_width, cell_height, environment):
-        super().__init__(x, y, width, cell_width, cell_height)
-        self.environment = environment
-
-    def collide_point(self, point: Vector2) -> bool:
-        return bool(self.get_cell_world(point))
 
 
 class BallSpawnerTileEffect(BrickEffect):
@@ -263,10 +313,12 @@ class GridCollision(Collision):
         for c in self.hit_cells:
             brick: Brick = c[2]
             brick.effect.activate()
-            self.brick_grid.set_cell(Grid.empty_cell, c[0], c[1])
+            self.brick_grid.kill_cell(c[0], c[1])
+
+        self.brick_grid.set_dirty()
 
         # Check if there's some cells left that are not empty
-        if not [cell for cell in self.brick_grid.cells if cell is not Grid.empty_cell]:
+        if not [cell for cell in self.brick_grid.cells if cell.alive]:
             self.state.brick_grids.remove(self.brick_grid)
 
         # If no more brick grids, send a notification
@@ -387,15 +439,15 @@ class MoveBallsCommand(Command):
         collide = False
         x = next_rect.left if x_direction < 0 else next_rect.right
         grids: list[tuple[BrickGrid, tuple[int, int]]] = []
-        for g in self.state.brick_grids:
-            cell_1 = g.get_cell_coordinates(x, next_rect.top)
-            cell_2 = g.get_cell_coordinates(x, next_rect.bottom)
-            cells = g.get_region_coordinate_and_value(cell_1[0], cell_1[1], cell_2[0], cell_2[1])
+        for grid in self.state.brick_grids:
+            cell_1 = grid.get_cell_coordinates(x, next_rect.top)
+            cell_2 = grid.get_cell_coordinates(x, next_rect.bottom)
+            cells = grid.get_region_coordinate_and_cells(cell_1[0], cell_1[1], cell_2[0], cell_2[1])
 
-            hit_cells = [c for c in cells if c[2] is not Grid.empty_cell]
+            hit_cells = [c for c in cells if c[2].alive]
 
             if hit_cells:
-                self.state.collisions.append(GridCollision(self.state, ball, axis, g, hit_cells))
+                self.state.collisions.append(GridCollision(self.state, ball, axis, grid, hit_cells))
                 collide = True
 
         if collide:
@@ -423,9 +475,9 @@ class MoveBallsCommand(Command):
         for g in self.state.brick_grids:
             cell_1 = g.get_cell_coordinates(ball_rect.left, y)
             cell_2 = g.get_cell_coordinates(ball_rect.right, y)
-            cells = g.get_region_coordinate_and_value(cell_1[0], cell_1[1], cell_2[0], cell_2[1])
+            cells = g.get_region_coordinate_and_cells(cell_1[0], cell_1[1], cell_2[0], cell_2[1])
 
-            hit_cells = [c for c in cells if c[2] is not Grid.empty_cell]
+            hit_cells = [c for c in cells if c[2].alive]
 
             if hit_cells:
                 self.state.collisions.append(GridCollision(self.state, ball, axis, g, hit_cells))
@@ -473,6 +525,16 @@ class RunCollisionsCommand(Command):
         self.state.collisions.clear()
 
 
+class DestroyBrickCommand(Command):
+    def __init__(self, brick_grids: list[BrickGrid], position: Vector2):
+        self.brick_grids = brick_grids
+        self.position = position
+
+    def run(self):
+        for bg in self.brick_grids:
+            bg.kill_cell_world(self.position)
+
+
 class EditBrickGrid(Command):
     def __init__(self, state, value, rect):
         self.state: GameState = state
@@ -508,6 +570,18 @@ class RemoveEmptyBrickGridsCommand(Command):
         self.state.brick_grids = [g for g in self.state.brick_grids if 1 in g.cells]
 
 
+class BrickGridMaintenanceCommand(Command):
+    def __init__(self, game_state: GameState):
+        self.game_state = game_state
+
+    def run(self):
+        for bg in self.game_state.brick_grids[:]:
+            bg.trim()
+            if not bg.cells:
+                self.game_state.brick_grids.remove(bg)
+                self.game_state.notify_brick_grid_destroyed(bg)
+
+
 class ChangeLevelIndex(Command):
     def __init__(self, state: GameState, increment: int):
         self.state = state
@@ -523,6 +597,7 @@ class UnloadLevelCommand(Command):
 
     def run(self):
         self.state.brick_grids.clear()
+
 
 class ClearBallsCommand(Command):
     def __init__(self, state: GameState):
@@ -665,10 +740,10 @@ class TileLayer(RenderingLayer):
                     draw_w = g.cell_width
                     draw_h = g.cell_height
 
-                    value = int(g.get_cell(x, y))
-                    value += int(g.get_cell(x + 1, y)) * 2
-                    value += int(g.get_cell(x, y + 1)) * 4
-                    value += int(g.get_cell(x + 1, y + 1)) * 8
+                    value = int(g.is_cell_alive(x, y))
+                    value += int(g.is_cell_alive(x + 1, y)) * 2
+                    value += int(g.is_cell_alive(x, y + 1)) * 4
+                    value += int(g.is_cell_alive(x + 1, y + 1)) * 8
 
                     if value == 0:
                         continue
@@ -753,7 +828,7 @@ class PlayGameMode(GameMode, GameStateObserver):
         keys = pygame.key.get_pressed()
 
         if not pygame.event.get_grab():
-            move_amount = ( -keys[pygame.K_LEFT] + keys[pygame.K_RIGHT] ) * Paddle.speed
+            move_amount = (-keys[pygame.K_LEFT] + keys[pygame.K_RIGHT]) * Paddle.speed
         else:
             move_amount = pygame.mouse.get_rel()[0] / 3
 
@@ -786,6 +861,9 @@ class PlayGameMode(GameMode, GameStateObserver):
 
         # Apply gravity
 
+        # Maintenance
+        self.commands.append(BrickGridMaintenanceCommand(self.game_state))
+
     def update(self):
         for command in self.commands:
             command.run()
@@ -804,7 +882,7 @@ class PlayGameMode(GameMode, GameStateObserver):
         self.level_clear = True
 
 
-class EditorMode(GameMode):
+class EditorMode(GameMode, GameStateObserver):
     def __init__(self, observer, game_state, play_game_mode: PlayGameMode):
         # Observer
         self.observer: UserInterface = observer
@@ -814,6 +892,9 @@ class EditorMode(GameMode):
 
         # Reference to the main game mode
         self.play_game_mode: PlayGameMode = play_game_mode
+
+        # Observe the GameState
+        self.game_state.add_observer(self)
 
         # Controls
         self.commands: list[Command] = []
@@ -835,6 +916,9 @@ class EditorMode(GameMode):
                 if event.key == pygame.K_ESCAPE:
                     self.observer.on_quit()
                     break
+                elif event.key == pygame.K_BACKSPACE:
+                    self.commands.append(
+                        DestroyBrickCommand(self.hovered_brick_grid, self.play_game_mode.viewport.mouse))
                 elif event.key == pygame.K_LEFT:
                     self.commands.append(ChangeLevelIndex(self.game_state, -1))
                     self.commands.append(UnloadLevelCommand(self.game_state))
@@ -881,10 +965,16 @@ class EditorMode(GameMode):
             h = abs(pygame.mouse.get_pos()[1] - self.selection_origin.y)
             self.selection_rect.update(x, y, w, h)
 
+        # Trim
+        self.commands.append(BrickGridMaintenanceCommand(self.game_state))
+
     def update(self):
         for command in self.commands:
             command.run()
         self.commands.clear()
+
+    def on_brick_grid_destroyed(self, brick_grid: BrickGrid):
+        self.hovered_brick_grid.remove(brick_grid)
 
 
 ###############################################################################
