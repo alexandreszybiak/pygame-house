@@ -16,11 +16,6 @@ os.environ['SDL_VIDEO_CENTERED'] = '1'
 #                                 Engine                                      #
 ###############################################################################
 
-class BrickEffect:
-    def activate(self):
-        pass
-
-
 class Cell:
     def __init__(self, alive=True):
         self.alive = alive
@@ -33,9 +28,8 @@ class Cell:
 
 
 class Brick(Cell):
-    def __init__(self, effect: BrickEffect):
+    def __init__(self):
         super().__init__()
-        self.effect = effect
 
 
 class Grid:
@@ -218,9 +212,6 @@ class GameState:
         self.brick_height = 8
         self.observers: list[GameStateObserver] = []
 
-        # Ball Effect Models
-        self.ball_spawner_tile_effect: BrickEffect = BallSpawnerTileEffect(self.balls, 3)
-
     def add_observer(self, observer: GameStateObserver):
         self.observers.append(observer)
 
@@ -249,7 +240,7 @@ class GameState:
             observer.on_last_brick_destroyed()
 
     def notify_brick_grid_destroyed(self, brick_grid: BrickGrid):
-        print("Brick Destroyed")
+        print("Brick Grid Destroyed")
         for observer in self.observers:
             observer.on_brick_grid_destroyed(brick_grid)
 
@@ -284,15 +275,6 @@ class Paddle(Entity):
         self.rect = Rect(position.x, position.y, 40, 4)
 
 
-class BallSpawnerTileEffect(BrickEffect):
-    def __init__(self, balls: list[Ball], amount: int):
-        self.balls = balls
-        self.amount = amount
-
-    def activate(self):
-        pass
-
-
 class Collision:
     def __init__(self, state: GameState, collider: Entity, axis: Vector2):
         self.state = state
@@ -312,7 +294,6 @@ class GridCollision(Collision):
     def process(self):
         for c in self.hit_cells:
             brick: Brick = c[2]
-            brick.effect.activate()
             self.brick_grid.kill_cell(c[0], c[1])
 
         self.brick_grid.set_dirty()
@@ -558,16 +539,17 @@ class CreateBrickGrid(Command):
 
         new_grid = BrickGrid(x * self.state.brick_width, y * self.state.brick_height, w, self.state.brick_width,
                              self.state.brick_height, 1)
-        new_grid.cells = [Grid.cell for i in range(w * h)]
+        new_grid.cells = [Brick() for _ in range(w * h)]
         self.state.brick_grids.append(new_grid)
 
 
-class RemoveEmptyBrickGridsCommand(Command):
-    def __init__(self, state: GameState):
-        self.state = state
+class DestroyBrickGridCommand(Command):
+    def __init__(self, game_state: GameState, brick_grid: BrickGrid):
+        self.game_state: GameState = game_state
+        self.brick_grid = brick_grid
 
     def run(self):
-        self.state.brick_grids = [g for g in self.state.brick_grids if 1 in g.cells]
+        self.game_state.brick_grids.remove(self.brick_grid)
 
 
 class BrickGridMaintenanceCommand(Command):
@@ -626,7 +608,7 @@ class LoadLevelCommand(Command):
                 env = brick_grid["env"]
                 new_grid: BrickGrid = BrickGrid(x, y, w, self.state.brick_width, self.state.brick_height, env)
                 for count, value in enumerate(brick_grid["cells"]):
-                    new_grid.cells.append(Brick(self.state.ball_spawner_tile_effect))
+                    new_grid.cells.append(Brick())
                 self.state.brick_grids.append(new_grid)
         except OSError as error:
             print("OS error:", error)
@@ -719,7 +701,7 @@ class EntityLayer(RenderingLayer):
 
 class TileLayer(RenderingLayer):
     def __init__(self, grids):
-        self.grids: list[BrickGrid] = grids
+        self.grids: list[BrickGrid] = grids  # This is a reference to the game state list of Brick Grids
         files = ["tiles_dual_16_8_forest.png"]
         self.tile_sets = []
         for f in files:
@@ -919,6 +901,9 @@ class EditorMode(GameMode, GameStateObserver):
                 elif event.key == pygame.K_BACKSPACE:
                     self.commands.append(
                         DestroyBrickCommand(self.hovered_brick_grid, self.play_game_mode.viewport.mouse))
+                elif event.key == pygame.K_DELETE:
+                    bg = self.hovered_brick_grid.pop()
+                    self.commands.append(DestroyBrickGridCommand(self.game_state, bg))
                 elif event.key == pygame.K_LEFT:
                     self.commands.append(ChangeLevelIndex(self.game_state, -1))
                     self.commands.append(UnloadLevelCommand(self.game_state))
