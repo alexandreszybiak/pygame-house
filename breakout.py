@@ -1,11 +1,9 @@
 import os
 import json
 from math import copysign, floor, ceil
-from turtledemo.penrose import start
 
 import pygame
 from pygame import Rect, Color
-from pygame.draw import lines
 from pygame.math import Vector2
 from pygame.surface import Surface
 
@@ -208,6 +206,7 @@ class GameState:
         self.balls: list[Ball] = []
         self.brick_grids: list[BrickGrid] = []
         self.collisions: list[Collision] = []
+        self.powerups: list[PowerUp] = []
         self.brick_width = 16
         self.brick_height = 8
         self.observers: list[GameStateObserver] = []
@@ -271,8 +270,23 @@ class Paddle(Entity):
 
     def __init__(self, state, position: Vector2):
         super().__init__(state, position)
-        self.move_speed = 2
         self.rect = Rect(position.x, position.y, 40, 4)
+
+
+class Effect:
+
+    def activate(self):
+        print("Effect Activated")
+
+
+class PowerUp(Entity):
+    move_speed = 1
+
+    def __init__(self, state: GameState, position: Vector2):
+        super().__init__(state, position)
+        self.rect = Rect(position.x, position.y, 10, 6)
+        self.velocity = Vector2(0, PowerUp.move_speed)
+        self.effect: Effect = Effect()
 
 
 class Collision:
@@ -295,6 +309,10 @@ class GridCollision(Collision):
         for c in self.hit_cells:
             brick: Brick = c[2]
             self.brick_grid.kill_cell(c[0], c[1])
+
+        # Create PowerUp
+        self.state.powerups.append(
+            PowerUp(self.state, Vector2(self.brick_grid.get_rect().centerx, self.brick_grid.get_rect().bottom)))
 
         self.brick_grid.set_dirty()
 
@@ -361,6 +379,19 @@ class LaunchBallCommand(Command):
         b.velocity = Vector2(1, -1)
 
 
+class CheckForPowerUpCommand(Command):
+    def __init__(self, state: GameState):
+        self.state = state
+
+    def run(self):
+        for p in self.state.powerups[:]:
+            if self.state.paddle.rect.colliderect(p):
+                p.effect.activate()
+                self.state.powerups.remove(p)
+            elif p.rect.top > self.state.area.bottom:
+                self.state.powerups.remove(p)
+
+
 class PaddleMoveCommand(Command):
     def __init__(self, state, paddle, move_amount):
         self.state: GameState = state
@@ -373,6 +404,15 @@ class PaddleMoveCommand(Command):
         for b in self.state.balls:
             if self.paddle.rect.colliderect(b):
                 b.rect.bottom = self.paddle.rect.top
+
+
+class MovePowerUpsCommand(Command):
+    def __init__(self, state):
+        self.state: GameState = state
+
+    def run(self):
+        for p in self.state.powerups:
+            p.rect.move_ip(p.velocity)
 
 
 class InitBallCommand(Command):
@@ -762,14 +802,17 @@ class PlayGameMode(GameMode, GameStateObserver):
         self.game_state = GameState()
         self.game_state.add_observer(self)
 
-        # Layers
+        # Entity Layers
         entity_layer = EntityLayer()
         self.game_state.add_observer(entity_layer)
         entity_layer.entities.append(self.game_state.paddle)
 
+        powerups_layer = EntityLayer()
+        powerups_layer.entities = self.game_state.powerups
+
         tile_layer = TileLayer(self.game_state.brick_grids)
 
-        self.rendering_layers = [tile_layer, entity_layer]
+        self.rendering_layers = [tile_layer, entity_layer, powerups_layer]
         self.viewport: Viewport = Viewport(self.game_state.area.size, 3)
 
         # Controls
@@ -826,7 +869,7 @@ class PlayGameMode(GameMode, GameStateObserver):
         if not self.game_state.balls:
             InitBallCommand(self.game_state).run()
 
-        # Keyboard controls the moves of the player's unit
+        # Move the Paddle
         if move_amount != 0:
             command = PaddleMoveCommand(self.game_state, self.paddle, move_amount)
             self.commands.append(command)
@@ -838,8 +881,14 @@ class PlayGameMode(GameMode, GameStateObserver):
         # Move balls
         self.commands.append(MoveBallsCommand(self.game_state))
 
-        # Check for collisions
+        # Move PowerUps
+        self.commands.append(MovePowerUpsCommand(self.game_state))
+
+        # Process collisions
         self.commands.append(RunCollisionsCommand(self.game_state))
+
+        # Check for PowerUp contact
+        self.commands.append(CheckForPowerUpCommand(self.game_state))
 
         # Apply gravity
 
