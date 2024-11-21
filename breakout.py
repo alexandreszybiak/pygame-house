@@ -130,6 +130,8 @@ class BrickGrid(Grid):
         if not self._dirty:
             return
 
+        pygame.image.save(pygame.display.get_surface(), "breakute.png")
+
         # Trim Grid from Top
         cells_to_delete = []
         for i in range(self.height):
@@ -201,7 +203,7 @@ class GameState:
     def __init__(self):
         self.level_index = 0
         self.area = Rect(0, 0, 160, 240)
-        self.paddle: Paddle = Paddle(self, Vector2(0, 200))
+        self.paddle: Paddle = Paddle(Vector2(0, 200))
         self.paddle.rect.centerx = self.area.centerx
         self.balls: list[Ball] = []
         self.brick_grids: list[BrickGrid] = []
@@ -210,6 +212,7 @@ class GameState:
         self.brick_width = 16
         self.brick_height = 8
         self.observers: list[GameStateObserver] = []
+        self._is_level_dirty = False
 
     def add_observer(self, observer: GameStateObserver):
         self.observers.append(observer)
@@ -245,8 +248,7 @@ class GameState:
 
 
 class Entity:
-    def __init__(self, state: GameState, position):
-        self.state: GameState = state
+    def __init__(self, position):
         self.position = position
         self.velocity = Vector2(0, 0)
         self.rect: Rect = Rect(0, 0, 1, 1)
@@ -258,32 +260,43 @@ class Entity:
 
 
 class Ball(Entity):
-    def __init__(self, state, position):
-        super().__init__(state, position)
+    def __init__(self, position):
+        super().__init__(position)
         self.rect = Rect(position.x, position.y, 4, 4)
-        self.rect.center = self.state.area.center
         self.is_stuck_on_paddle = False
 
 
 class Paddle(Entity):
     speed = 2
 
-    def __init__(self, state, position: Vector2):
-        super().__init__(state, position)
+    def __init__(self, position: Vector2):
+        super().__init__(position)
         self.rect = Rect(position.x, position.y, 40, 4)
 
 
 class Effect:
 
-    def activate(self):
-        print("Effect Activated")
+    def activate(self, game_state: GameState):
+        for b in game_state.balls[:]:
+            pos = b.rect
+            velocity = b.velocity
+
+            new_ball = Ball(Vector2(pos.x, pos.y))
+            new_ball.velocity = velocity.rotate(-10)
+            game_state.balls.append(new_ball)
+            game_state.notify_ball_created(new_ball)
+
+            new_ball = Ball(Vector2(pos.x, pos.y))
+            new_ball.velocity = velocity.rotate(10)
+            game_state.balls.append(new_ball)
+            game_state.notify_ball_created(new_ball)
 
 
 class PowerUp(Entity):
     move_speed = 1
 
-    def __init__(self, state: GameState, position: Vector2):
-        super().__init__(state, position)
+    def __init__(self, position: Vector2):
+        super().__init__(position)
         self.rect = Rect(position.x, position.y, 10, 6)
         self.velocity = Vector2(0, PowerUp.move_speed)
         self.effect: Effect = Effect()
@@ -311,18 +324,12 @@ class GridCollision(Collision):
             self.brick_grid.kill_cell(c[0], c[1])
 
         # Create PowerUp
-        self.state.powerups.append(
-            PowerUp(self.state, Vector2(self.brick_grid.get_rect().centerx, self.brick_grid.get_rect().bottom)))
+        if len(self.state.balls) == 1 and not self.state.powerups:
+            self.state.powerups.append(
+                PowerUp(Vector2(self.brick_grid.get_rect().centerx, self.brick_grid.get_rect().bottom)))
 
         self.brick_grid.set_dirty()
-
-        # Check if there's some cells left that are not empty
-        if not [cell for cell in self.brick_grid.cells if cell.alive]:
-            self.state.brick_grids.remove(self.brick_grid)
-
-        # If no more brick grids, send a notification
-        if not self.state.brick_grids:
-            self.state.notify_last_brick_destroyed()
+        self.state._is_level_dirty = True
 
 
 class BallCollision(Collision):
@@ -386,7 +393,7 @@ class CheckForPowerUpCommand(Command):
     def run(self):
         for p in self.state.powerups[:]:
             if self.state.paddle.rect.colliderect(p):
-                p.effect.activate()
+                p.effect.activate(self.state)
                 self.state.powerups.remove(p)
             elif p.rect.top > self.state.area.bottom:
                 self.state.powerups.remove(p)
@@ -420,7 +427,7 @@ class InitBallCommand(Command):
         self.state = state
 
     def run(self):
-        new_ball = Ball(self.state, Vector2(0, 0))
+        new_ball = Ball(Vector2(0, 0))
         new_ball.is_stuck_on_paddle = True
         new_ball.rect.midbottom = self.state.paddle.rect.midtop
         self.state.balls.append(new_ball)
@@ -597,11 +604,25 @@ class BrickGridMaintenanceCommand(Command):
         self.game_state = game_state
 
     def run(self):
+        if not self.game_state._is_level_dirty:
+            return
         for bg in self.game_state.brick_grids[:]:
             bg.trim()
             if not bg.cells:
                 self.game_state.brick_grids.remove(bg)
                 self.game_state.notify_brick_grid_destroyed(bg)
+
+        self.game_state._is_level_dirty = False
+
+
+class CheckForEndOfLevelCommand(Command):
+    def __init__(self, game_state: GameState):
+        self.game_state = game_state
+
+    def run(self):
+        # If no more brick grids, send a notification
+        if not self.game_state.brick_grids:
+            self.game_state.notify_last_brick_destroyed()
 
 
 class ChangeLevelIndex(Command):
@@ -803,16 +824,18 @@ class PlayGameMode(GameMode, GameStateObserver):
         self.game_state.add_observer(self)
 
         # Entity Layers
-        entity_layer = EntityLayer()
-        self.game_state.add_observer(entity_layer)
-        entity_layer.entities.append(self.game_state.paddle)
+        paddle_layer = EntityLayer()
+        paddle_layer.entities.append(self.game_state.paddle)
+
+        ball_layer = EntityLayer()
+        ball_layer.entities = self.game_state.balls
 
         powerups_layer = EntityLayer()
         powerups_layer.entities = self.game_state.powerups
 
         tile_layer = TileLayer(self.game_state.brick_grids)
 
-        self.rendering_layers = [tile_layer, entity_layer, powerups_layer]
+        self.rendering_layers = [tile_layer, paddle_layer, ball_layer, powerups_layer]
         self.viewport: Viewport = Viewport(self.game_state.area.size, 3)
 
         # Controls
@@ -894,6 +917,9 @@ class PlayGameMode(GameMode, GameStateObserver):
 
         # Maintenance
         self.commands.append(BrickGridMaintenanceCommand(self.game_state))
+
+        # End Check
+        self.commands.append(CheckForEndOfLevelCommand(self.game_state))
 
     def update(self):
         for command in self.commands:
@@ -1008,7 +1034,7 @@ class EditorMode(GameMode, GameStateObserver):
         self.commands.clear()
 
     def on_brick_grid_destroyed(self, brick_grid: BrickGrid):
-        self.hovered_brick_grid.remove(brick_grid)
+        self.hovered_brick_grid.clear()
 
 
 ###############################################################################
